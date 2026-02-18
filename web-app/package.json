@@ -1,0 +1,49 @@
+{
+  "name": "web-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "run-p typecheck \"build-only {@}\" --",
+    "preview": "vite preview",
+    "build-only": "vite build",
+    "typecheck": "vue-tsc --build",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
+  },
+  "dependencies": {
+    "@heroicons/vue": "^2.2.0",
+    "@simplewebauthn/browser": "^13.2.2",
+    "@simplewebauthn/server": "^13.2.2",
+    "@tanstack/vue-query": "^5.17.1",
+    "@vueuse/core": "^13.5.0",
+    "@wagmi/connectors": "5.8.5",
+    "@wagmi/core": "2.17.3",
+    "@wagmi/vue": "0.1.22",
+    "prividium": "^0.3.1",
+    "viem": "2.45.1",
+    "vue": "^3.5.17",
+    "vue-router": "^4.5.1",
+    "zksync-sso": "1.0.0-beta.4",
+    "zksync-sso-stable": "npm:zksync-sso@0.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@tailwindcss/vite": "^4.1.18",
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^22.15.32",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/tsconfig": "^0.7.0",
+    "npm-run-all2": "^8.0.4",
+    "tailwindcss": "^4.1.18",
+    "typescript": "~5.8.0",
+    "vite": "^7.0.0",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-vue-devtools": "^7.7.7",
+    "vite-plugin-wasm": "^3.5.0",
+    "vue-tsc": "^2.2.10"
+  },
+  "packageManager": "pnpm@9.2.0+sha1.886364ebd6dae009284bebc56ed4296bb6dd557a"
+}

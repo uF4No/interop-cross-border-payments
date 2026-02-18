@@ -1,0 +1,66 @@
+/* Design system color palette */
+:root {
+  /* Base colors */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  --color-white: #ffffff;
+
+  /* Brand colors */
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+
+  /* Semantic colors - consistent light theme */
+  --color-background: var(--color-white);
+  --color-background-soft: var(--color-gray-50);
+  --color-background-mute: var(--color-gray-100);
+  --color-surface: var(--color-white);
+  --color-surface-soft: var(--color-gray-50);
+
+  --color-border: var(--color-gray-200);
+  --color-border-hover: var(--color-gray-300);
+
+  --color-text: var(--color-gray-900);
+  --color-text-soft: var(--color-gray-700);
+  --color-text-muted: var(--color-gray-500);
+  --color-heading: var(--color-gray-900);
+
+  --section-gap: 160px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--color-text);
+  background: var(--color-background);
+  transition: color 0.5s, background-color 0.5s;
+  line-height: 1.6;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  font-size: 15px;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

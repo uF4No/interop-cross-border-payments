@@ -1,0 +1,19 @@
+{
+  "sso": {
+    "factory": "0x...",
+    "beacon": "0x...",
+    "accountImplementation": "0x...",
+    "webauthnValidator": "0x...",
+    "eoaValidator": "0x...",
+    "sessionValidator": "0x...",
+    "guardianExecutor": "0x...",
+    "entryPoint": "0x..."
+  },
+  "interop": {
+    "l1InteropHandler": "0x...",
+    "l2InteropCenter": "0x..."
+  },
+  "app": {
+    "counter": "0x..."
+  }
+}

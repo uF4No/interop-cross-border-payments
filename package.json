@@ -1,0 +1,26 @@
+{
+  "name": "prividium-template-vue",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter web-app dev",
+    "dev:web-app": "pnpm --filter web-app dev",
+    "dev:backend": "pnpm --filter sso-interop-backend dev",
+    "setup-app": "pnpm --filter prividium-setup setup-app",
+    "setup:permissions": "pnpm -C setup run setup:permissions",
+    "setup": "pnpm -C setup run setup",
+    "ci:contracts": "cd contracts && ([ -d lib/forge-std/src ] || forge install foundry-rs/forge-std@v1.9.6 --no-git) && forge build",
+    "ci:local": "pnpm check && pnpm ci:contracts && pnpm --filter web-app build",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "setup-env": "cp web-app/.env.example web-app/.env && cp contracts/.env.example contracts/.env && cp backend/.env.example backend/.env",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4"
+  },
+  "packageManager": "pnpm@9.2.0"
+}

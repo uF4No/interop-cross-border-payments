@@ -1,0 +1,20 @@
+{
+  "extends": "@tsconfig/node22/tsconfig.json",
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "moduleResolution": "Bundler",
+    "module": "ES2022",
+    "outDir": "dist",
+    "sourceMap": true,
+    "lib": ["es2022"],
+    "types": ["node", "undici-types"]
+  },
+  "exclude": ["src/setups/auction-setup.ts", "src/setups/greeting-setup.ts"]
+}

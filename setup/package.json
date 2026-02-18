@@ -1,0 +1,31 @@
+{
+  "name": "prividium-setup",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "tsx src/main.ts",
+    "setup:permissions": "tsx src/main.ts",
+    "setup:system": "tsx src/system.ts",
+    "setup:app": "tsx src/app.ts",
+    "setup-app": "tsx src/setup-app.ts",
+    "verify:sso": "tsx src/verify-sso.ts",
+    "check:contracts": "tsx src/verify-sso.ts",
+    "refresh:env": "tsx src/refresh-env.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clack/prompts": "^0.11.0",
+    "@dotenvx/dotenvx": "^1.51.4",
+    "abitype": "^1.2.3",
+    "viem": "^2.44.2",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^22.15.32",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.0",
+    "undici-types": "^6.20.0"
+  }
+}
