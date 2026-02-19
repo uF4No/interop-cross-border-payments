@@ -5,9 +5,14 @@ Welcome to the ZKsync Prividium™ template! This monorepo provides a complete s
 
 ## TODOs
 
-- [ ] bring contracts
-- [ ] include local-prividium as dep / package
+- [ ] migrate contracts from existing repo
+- [ ] UI create invoices
+- [ ] service to read FX from chain C
+- [ ] UI pay invoice
 - [ ] run services in parallel as prividium repo?
+- [x] create docker compose for 3 L2s + Prividium
+- [x] patch L1 genesis with regristration of 3 L2 chains
+- [x] ~~include local-prividium as dep / package~~
 
 ## Using this template
 
