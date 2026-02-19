@@ -2,6 +2,13 @@
 
 Welcome to the ZKsync Prividium™ template! This monorepo provides a complete starting point for building privacy-focused decentralized applications on Prividium™ chains.
  
+
+## TODOs
+
+- [ ] bring contracts
+- [ ] include local-prividium as dep / package
+- [ ] run services in parallel as prividium repo?
+
 ## Using this template
 
 This template is a starting point for building privacy-focused decentralized applications on Prividium™ chains. It includes a basic counter contract, a setup script to deploy contracts and configure permissions for the sample counter contract in the ZKsync Prividium™ ecosystem, a Node.js backend service necessary for ZKsync SSO Smart Account deployment, and a Vue 3 + TypeScript frontend demonstrating Prividium authentication and secure RPC proxying to interact with smart contracts.

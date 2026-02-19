@@ -127,40 +127,6 @@ importers:
         specifier: ^6.20.0
         version: 6.21.0
 
-  setup-permissions:
-    dependencies:
-      '@clack/prompts':
-        specifier: ^0.11.0
-        version: 0.11.0
-      '@dotenvx/dotenvx':
-        specifier: ^1.51.4
-        version: 1.52.0
-      abitype:
-        specifier: ^1.2.3
-        version: 1.2.3(typescript@5.8.3)(zod@4.3.6)
-      viem:
-        specifier: ^2.44.2
-        version: 2.45.1(bufferutil@4.0.9)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.3.6)
-      zod:
-        specifier: ^4.3.5
-        version: 4.3.6
-    devDependencies:
-      '@tsconfig/node22':
-        specifier: ^22.0.2
-        version: 22.0.5
-      '@types/node':
-        specifier: ^22.15.32
-        version: 22.19.1
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ~5.8.0
-        version: 5.8.3
-      undici-types:
-        specifier: ^6.20.0
-        version: 6.21.0
-
   web-app:
     dependencies:
       '@heroicons/vue':

@@ -1,0 +1,16 @@
+# Compiler files
+cache/
+out/
+zkout/
+
+# Ignores broadcasts
+/broadcast
+/deployments
+
+# Docs
+docs/
+
+# Dotenv file
+.env
+.env.hosted
+.env.local
