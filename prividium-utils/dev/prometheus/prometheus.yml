@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'prividium-api-l2a'
+    static_configs:
+      - targets:
+          - 'permissions-api-l2a:9091'
+        labels:
+          service: 'prividium-api-l2a'
+
+  - job_name: 'prividium-api-l2b'
+    static_configs:
+      - targets:
+          - 'permissions-api-l2b:9091'
+        labels:
+          service: 'prividium-api-l2b'
+
+  - job_name: 'prividium-api-l2c'
+    static_configs:
+      - targets:
+          - 'permissions-api-l2c:9091'
+        labels:
+          service: 'prividium-api-l2c'

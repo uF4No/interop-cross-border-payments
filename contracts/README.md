@@ -1,68 +1,31 @@
-# Smart Contracts - ZKsync Prividium™
+# RepoContract - Cross-Chain Intraday Repo System
 
-Foundry-based smart contract development environment for ZKsync Prividium.
+This contract implements a cross-chain intraday repo system that allows users to lend and borrow tokens with collateral for specified durations across different ZKSync chains.
 
-**IMPORTANT**: There's no need to use foundry-zksync or the `--zksync` flag, as ZKsync chains are fully EVM equivalent now.
+## Features
 
+- Create lending offers with specified tokens, amounts, durations, and chains
+- Accept offers by providing collateral
+- Repay loans to retrieve collateral
+- Claim collateral if loans are not repaid within the duration plus grace period
+- Admin-controlled grace period (default 2 minutes)
+- Cross-chain token transfers using ZKSync's interop system
+- Refund addresses for secure token transfers across chains
 
-## Overview
+## How It Works
 
-This package contains the smart contracts for the Prividium Template. It uses **Foundry ZKsync** for compiling, testing, and deploying contracts to ZKsync-based networks.
+1. **Create Offer**: A lender creates an offer specifying the lending token, amount, required collateral token, amount, duration, their chain ID, and refund address.
 
-## Prerequisites
+2. **Accept Offer**: A borrower accepts an offer by providing their chain ID and refund address, then depositing the required collateral. The lending tokens are transferred to the borrower's chain.
 
-- [Foundry ZKsync](https://github.com/matter-labs/foundry-zksync) installed.
+3. **Repay Loan**: The borrower repays the loan, and both the collateral and lending tokens are returned to their respective owners on their respective chains.
 
-## Getting Started
+4. **Claim Collateral**: If the loan is not repaid within the duration plus grace period, the lender can claim the collateral tokens.
 
-### 1. Install Dependencies
+## Cross-Chain Functionality
 
-```bash
-forge install
-```
+The contract uses ZKSync's interop system to transfer tokens between different chains:
 
-### 2. Build
-
-Compile the smart contracts:
-
-```bash
-forge build
-# or from the root
-pnpm --filter contracts build
-```
-
-### 3. Test
-
-Run the test suite:
-
-```bash
-forge test
-# or from the root
-pnpm --filter contracts test
-```
-
-### 4. Deploy
-
-To deploy to ZKsync Prividium, you can use `forge create`. In this repo, the
-recommended path is to use the `setup` package, which deploys contracts,
-registers permissions, and writes addresses to the canonical config:
-
-- `config/contracts.json`
-
-```bash
-forge create src/Counter.sol:Counter --rpc-url http://127.0.0.1:24101/rpc --private-key YOUR_PRIVATE_KEY
-```
-
-
-## Structure
-
-- `src/`: Smart contract source files.
-- `test/`: Foundry tests.
-- `lib/`: Dependencies managed by Forge.
-- `script/`: Deployment and interaction scripts.
-
-## Formatting
-
-```bash
-forge fmt
-```
+- When a user on Chain A needs to receive tokens on Chain A, but the transaction is initiated on Chain B, the contract uses interop calls to bridge the tokens.
+- The contract detects if the recipient is on the same chain as the current contract instance - if so, it uses a regular token transfer; if not, it initiates a cross-chain token transfer.
+- Each user provides a refund address on their chain, which is where tokens will be sent.
