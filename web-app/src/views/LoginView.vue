@@ -14,12 +14,14 @@ const {
   isAuthenticated,
   isAuthenticating,
   authError,
+  selectedChainKey,
   authenticate,
   getAuthHeaders,
   userProfile,
   refreshUserProfile,
   getChain,
-  getTransport
+  getTransport,
+  setSelectedChainKey
 } = usePrividium();
 const rpcClient = useRpcClient();
 
@@ -68,6 +70,10 @@ async function redirectAfterAuth() {
 }
 
 async function continueToApp() {
+  if (completedAccountAddress.value?.startsWith('0x')) {
+    saveAccountAddress(completedAccountAddress.value as Address);
+  }
+  await refreshUserProfile();
   await redirectAfterAuth();
 }
 
@@ -433,6 +439,38 @@ const resetSetup = () => {
 
         <!-- STANDARD LOGIN STATE -->
         <div v-else class="space-y-6">
+          <div>
+            <p class="text-xs font-bold text-slate-700 uppercase tracking-wide mb-3">Login Chain</p>
+            <div class="inline-flex w-full rounded-2xl border border-slate-200 bg-slate-50 p-1">
+              <button
+                type="button"
+                @click="setSelectedChainKey('A')"
+                :disabled="isAuthenticating"
+                :class="[
+                  'flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                  selectedChainKey === 'A' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                  isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
+                ]"
+              >
+                Chain A
+              </button>
+              <button
+                type="button"
+                @click="setSelectedChainKey('B')"
+                :disabled="isAuthenticating"
+                :class="[
+                  'flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                  selectedChainKey === 'B' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                  isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
+                ]"
+              >
+                Chain B
+              </button>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">
+              Select the Prividium environment you want to authenticate against.
+            </p>
+          </div>
           <button 
             @click="login"
             class="enterprise-button-primary w-full py-4 text-base"

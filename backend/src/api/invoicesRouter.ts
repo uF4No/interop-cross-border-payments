@@ -1,0 +1,559 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import {
+  createPublicClient,
+  defineChain,
+  getAddress,
+  http,
+  type Address,
+  zeroAddress
+} from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import express, { type Request, type Response, type Router } from 'express';
+import { StatusCodes } from 'http-status-codes';
+import { z } from 'zod';
+
+import { createApiResponse } from '@/utils/response/openAPIResponseBuilders';
+import { ServiceResponse } from '@/utils/response/serviceResponse';
+
+const ADMIN_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
+const ADMIN_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address;
+const INVOICE_CHUNK_SIZE = 25;
+
+const invoiceAbi = [
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getUserCreatedInvoiceCount',
+    inputs: [{ name: 'user', type: 'address' }],
+    outputs: [{ name: 'count', type: 'uint256' }]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getUserCreatedInvoices',
+    inputs: [
+      { name: 'user', type: 'address' },
+      { name: 'startIndex', type: 'uint256' },
+      { name: 'endIndex', type: 'uint256' }
+    ],
+    outputs: [{ name: 'invoiceIds', type: 'uint256[]' }]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getUserPendingInvoiceCount',
+    inputs: [{ name: 'user', type: 'address' }],
+    outputs: [{ name: 'count', type: 'uint256' }]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getUserPendingInvoices',
+    inputs: [
+      { name: 'user', type: 'address' },
+      { name: 'startIndex', type: 'uint256' },
+      { name: 'endIndex', type: 'uint256' }
+    ],
+    outputs: [{ name: 'invoiceIds', type: 'uint256[]' }]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getInvoiceDetails',
+    inputs: [{ name: 'invoiceId', type: 'uint256' }],
+    outputs: [
+      {
+        name: 'invoice',
+        type: 'tuple',
+        components: [
+          { name: 'id', type: 'uint256' },
+          { name: 'creator', type: 'address' },
+          { name: 'recipient', type: 'address' },
+          { name: 'creatorRefundAddress', type: 'address' },
+          { name: 'recipientRefundAddress', type: 'address' },
+          { name: 'creatorChainId', type: 'uint256' },
+          { name: 'recipientChainId', type: 'uint256' },
+          { name: 'billingToken', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'paymentToken', type: 'address' },
+          { name: 'paymentAmount', type: 'uint256' },
+          { name: 'status', type: 'uint8' },
+          { name: 'createdAt', type: 'uint256' },
+          { name: 'paidAt', type: 'uint256' },
+          { name: 'text', type: 'string' }
+        ]
+      }
+    ]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getMultipleInvoiceDetails',
+    inputs: [{ name: 'invoiceIds', type: 'uint256[]' }],
+    outputs: [
+      {
+        name: 'invoiceDetails',
+        type: 'tuple[]',
+        components: [
+          { name: 'id', type: 'uint256' },
+          { name: 'creator', type: 'address' },
+          { name: 'recipient', type: 'address' },
+          { name: 'creatorRefundAddress', type: 'address' },
+          { name: 'recipientRefundAddress', type: 'address' },
+          { name: 'creatorChainId', type: 'uint256' },
+          { name: 'recipientChainId', type: 'uint256' },
+          { name: 'billingToken', type: 'address' },
+          { name: 'amount', type: 'uint256' },
+          { name: 'paymentToken', type: 'address' },
+          { name: 'paymentAmount', type: 'uint256' },
+          { name: 'status', type: 'uint8' },
+          { name: 'createdAt', type: 'uint256' },
+          { name: 'paidAt', type: 'uint256' },
+          { name: 'text', type: 'string' }
+        ]
+      }
+    ]
+  }
+] as const;
+
+type ContractsConfig = {
+  chains?: {
+    c?: {
+      chainId?: number | string;
+      rpcUrl?: string;
+      apiUrl?: string;
+      authBaseUrl?: string;
+      invoicePayment?: string;
+    };
+  };
+};
+
+type InvoiceStatus = 'Created' | 'Paid' | 'Cancelled';
+
+type RawInvoice = {
+  id: bigint;
+  creator: Address;
+  recipient: Address;
+  creatorRefundAddress: Address;
+  recipientRefundAddress: Address;
+  creatorChainId: bigint;
+  recipientChainId: bigint;
+  billingToken: Address;
+  amount: bigint;
+  paymentToken: Address;
+  paymentAmount: bigint;
+  status: number;
+  createdAt: bigint;
+  paidAt: bigint;
+  text: string;
+};
+
+type NormalizedInvoice = {
+  id: string;
+  creator: Address;
+  recipient: Address;
+  creatorRefundAddress: Address;
+  recipientRefundAddress: Address;
+  creatorChainId: number;
+  recipientChainId: number;
+  billingToken: Address;
+  amount: string;
+  paymentToken: Address | null;
+  paymentAmount: string;
+  status: InvoiceStatus | 'Unknown';
+  createdAt: string;
+  paidAt: string | null;
+  text: string;
+  sourceTags: Array<'created' | 'pending'>;
+};
+
+type ChainCContext = {
+  chainId: number;
+  rpcUrl: string;
+  apiUrl: string;
+  authBaseUrl: string;
+  invoicePayment: Address;
+};
+
+type InvoiceResponseObject = {
+  chain: {
+    chainId: number;
+    rpcUrl: string;
+    apiUrl: string;
+    authBaseUrl: string;
+    invoicePayment: Address;
+  };
+  adminAddress: Address;
+  counts: {
+    created: number;
+    pending: number;
+    total: number;
+  };
+  createdInvoiceIds: string[];
+  pendingInvoiceIds: string[];
+  invoices: NormalizedInvoice[];
+};
+
+const invoicesRegistry = new OpenAPIRegistry();
+export const invoicesRouter: Router = express.Router();
+
+invoicesRegistry.registerPath({
+  method: 'get',
+  path: '/invoices',
+  tags: ['Invoices'],
+  responses: {
+    ...createApiResponse(z.any(), 'Success', StatusCodes.OK),
+    ...createApiResponse(z.any(), 'Bad Request', StatusCodes.BAD_REQUEST)
+  }
+});
+
+invoicesRegistry.registerPath({
+  method: 'post',
+  path: '/invoices',
+  tags: ['Invoices'],
+  responses: {
+    ...createApiResponse(z.any(), 'Success', StatusCodes.OK),
+    ...createApiResponse(z.any(), 'Bad Request', StatusCodes.BAD_REQUEST)
+  }
+});
+
+function resolveContractsConfigPath(): string {
+  const configuredPath = process.env.CONTRACTS_CONFIG_PATH?.trim();
+  const candidates = [
+    configuredPath ? path.resolve(process.cwd(), configuredPath) : null,
+    path.resolve(process.cwd(), 'config', 'contracts.json'),
+    path.resolve(process.cwd(), '..', 'config', 'contracts.json')
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `Unable to locate contracts config. Checked: ${candidates.join(', ')}`
+  );
+}
+
+function loadChainCContext(): ChainCContext {
+  const configPath = resolveContractsConfigPath();
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const config = JSON.parse(raw) as ContractsConfig;
+  const chainC = config.chains?.c;
+
+  if (!chainC) {
+    throw new Error(`Missing chains.c in ${configPath}`);
+  }
+
+  const chainId = Number(chainC.chainId);
+  const rpcUrl = chainC.rpcUrl?.trim();
+  const apiUrl = chainC.apiUrl?.trim();
+  const authBaseUrl = chainC.authBaseUrl?.trim();
+  const invoicePayment = chainC.invoicePayment?.trim();
+
+  if (!Number.isFinite(chainId) || chainId <= 0) {
+    throw new Error(`Invalid chain C chainId in ${configPath}`);
+  }
+  if (!rpcUrl) {
+    throw new Error(`Missing chains.c.rpcUrl in ${configPath}`);
+  }
+  if (!apiUrl) {
+    throw new Error(`Missing chains.c.apiUrl in ${configPath}`);
+  }
+  if (!authBaseUrl) {
+    throw new Error(`Missing chains.c.authBaseUrl in ${configPath}`);
+  }
+  if (!invoicePayment || !invoicePayment.startsWith('0x')) {
+    throw new Error(`Missing chains.c.invoicePayment in ${configPath}`);
+  }
+
+  return {
+    chainId,
+    rpcUrl,
+    apiUrl,
+    authBaseUrl,
+    invoicePayment: getAddress(invoicePayment)
+  };
+}
+
+function chunkArray<T>(values: readonly T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function normalizeInvoice(invoice: RawInvoice, sourceTags: Array<'created' | 'pending'>): NormalizedInvoice {
+  const statuses: InvoiceStatus[] = ['Created', 'Paid', 'Cancelled'];
+  const status = statuses[Number(invoice.status)] ?? 'Unknown';
+
+  return {
+    id: invoice.id.toString(),
+    creator: invoice.creator,
+    recipient: invoice.recipient,
+    creatorRefundAddress: invoice.creatorRefundAddress,
+    recipientRefundAddress: invoice.recipientRefundAddress,
+    creatorChainId: Number(invoice.creatorChainId),
+    recipientChainId: Number(invoice.recipientChainId),
+    billingToken: invoice.billingToken,
+    amount: invoice.amount.toString(),
+    paymentToken: invoice.paymentToken === zeroAddress ? null : invoice.paymentToken,
+    paymentAmount: invoice.paymentAmount.toString(),
+    status,
+    createdAt: invoice.createdAt.toString(),
+    paidAt: invoice.paidAt === 0n ? null : invoice.paidAt.toString(),
+    text: invoice.text,
+    sourceTags
+  };
+}
+
+async function postJson(url: string, body: Record<string, unknown>) {
+  return fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+async function getAdminAuthToken(chainC: ChainCContext): Promise<string> {
+  const adminAccount = privateKeyToAccount(ADMIN_PRIVATE_KEY);
+  if (adminAccount.address.toLowerCase() !== ADMIN_ADDRESS.toLowerCase()) {
+    throw new Error('Hardcoded admin private key does not match hardcoded admin address');
+  }
+
+  const siweDomain = new URL(chainC.authBaseUrl).host;
+  const baseCandidates = [chainC.apiUrl.replace(/\/+$/, '')];
+  if (!baseCandidates[0].endsWith('/api')) {
+    baseCandidates.push(`${baseCandidates[0]}/api`);
+  }
+
+  let lastError: unknown;
+  for (const baseUrl of baseCandidates) {
+    try {
+      const challengeRes = await postJson(`${baseUrl}/siwe-messages/`, {
+        address: ADMIN_ADDRESS,
+        domain: siweDomain
+      });
+
+      if (!challengeRes.ok) {
+        const errorText = await challengeRes.text().catch(() => '');
+        throw new Error(
+          `Failed to request SIWE challenge from ${baseUrl}: ${challengeRes.status} ${challengeRes.statusText} ${errorText}`
+        );
+      }
+
+      const challengeJson = (await challengeRes.json()) as { message?: string; msg?: string };
+      const message = challengeJson.message ?? challengeJson.msg;
+      if (!message) {
+        throw new Error(`SIWE challenge from ${baseUrl} did not include a message`);
+      }
+
+      const signature = await adminAccount.signMessage({ message });
+      const loginRes = await postJson(`${baseUrl}/auth/login/crypto-native`, {
+        message,
+        signature
+      });
+
+      if (!loginRes.ok) {
+        const errorText = await loginRes.text().catch(() => '');
+        throw new Error(
+          `Failed to authenticate admin session against ${baseUrl}: ${loginRes.status} ${loginRes.statusText} ${errorText}`
+        );
+      }
+
+      const loginJson = (await loginRes.json()) as { token?: string };
+      if (!loginJson.token) {
+        throw new Error(`Admin login response from ${baseUrl} did not include a token`);
+      }
+
+      return loginJson.token;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Failed to authenticate admin session for chain C');
+}
+
+function createChainCClient(chainC: ChainCContext, token: string) {
+  const chain = defineChain({
+    id: chainC.chainId,
+    name: 'Prividium Chain C',
+    nativeCurrency: {
+      name: 'Ether',
+      symbol: 'ETH',
+      decimals: 18
+    },
+    rpcUrls: {
+      default: { http: [chainC.rpcUrl] },
+      public: { http: [chainC.rpcUrl] }
+    }
+  });
+
+  return createPublicClient({
+    chain,
+    transport: http(chainC.rpcUrl, {
+      fetchFn: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set('Authorization', `Bearer ${token}`);
+        return fetch(url, { ...init, headers });
+      }
+    })
+  });
+}
+
+async function readInvoiceIds(
+  client: ReturnType<typeof createChainCClient>,
+  functionName: 'getUserCreatedInvoices' | 'getUserPendingInvoices',
+  user: Address,
+  count: bigint,
+  invoicePayment: Address
+): Promise<readonly bigint[]> {
+  if (count === 0n) {
+    return [];
+  }
+
+  return (await client.readContract({
+    address: invoicePayment,
+    abi: invoiceAbi,
+    functionName,
+    args: [user, 0n, count]
+  })) as readonly bigint[];
+}
+
+async function readInvoiceDetails(
+  client: ReturnType<typeof createChainCClient>,
+  invoiceIds: bigint[],
+  invoicePayment: Address
+): Promise<RawInvoice[]> {
+  if (invoiceIds.length === 0) {
+    return [];
+  }
+
+  const results: RawInvoice[] = [];
+  for (const chunk of chunkArray(invoiceIds, INVOICE_CHUNK_SIZE)) {
+    try {
+      const chunkResults = (await client.readContract({
+        address: invoicePayment,
+        abi: invoiceAbi,
+        functionName: 'getMultipleInvoiceDetails',
+        args: [chunk]
+      })) as readonly RawInvoice[];
+      results.push(...chunkResults);
+      continue;
+    } catch (error) {
+      console.warn('getMultipleInvoiceDetails failed, falling back to per-invoice reads', error);
+    }
+
+    for (const invoiceId of chunk) {
+      const invoice = (await client.readContract({
+        address: invoicePayment,
+        abi: invoiceAbi,
+        functionName: 'getInvoiceDetails',
+        args: [invoiceId]
+      })) as unknown as RawInvoice;
+      results.push(invoice);
+    }
+  }
+
+  return results;
+}
+
+async function fetchInvoices() {
+  const chainC = loadChainCContext();
+
+  const token = await getAdminAuthToken(chainC);
+  const client = createChainCClient(chainC, token);
+
+  const [createdCount, pendingCount] = await Promise.all([
+    client.readContract({
+      address: chainC.invoicePayment,
+      abi: invoiceAbi,
+      functionName: 'getUserCreatedInvoiceCount',
+      args: [ADMIN_ADDRESS]
+    }) as Promise<bigint>,
+    client.readContract({
+      address: chainC.invoicePayment,
+      abi: invoiceAbi,
+      functionName: 'getUserPendingInvoiceCount',
+      args: [ADMIN_ADDRESS]
+    }) as Promise<bigint>
+  ]);
+
+  const [createdInvoiceIds, pendingInvoiceIds] = await Promise.all([
+    readInvoiceIds(client, 'getUserCreatedInvoices', ADMIN_ADDRESS, createdCount, chainC.invoicePayment),
+    readInvoiceIds(client, 'getUserPendingInvoices', ADMIN_ADDRESS, pendingCount, chainC.invoicePayment)
+  ]);
+
+  const sourceMap = new Map<string, Array<'created' | 'pending'>>();
+  for (const invoiceId of createdInvoiceIds) {
+    const key = invoiceId.toString();
+    sourceMap.set(key, [...(sourceMap.get(key) ?? []), 'created']);
+  }
+  for (const invoiceId of pendingInvoiceIds) {
+    const key = invoiceId.toString();
+    sourceMap.set(key, [...(sourceMap.get(key) ?? []), 'pending']);
+  }
+
+  const orderedUniqueInvoiceIds = [...sourceMap.keys()].map((value) => BigInt(value));
+  const invoices = await readInvoiceDetails(client, orderedUniqueInvoiceIds, chainC.invoicePayment);
+  const invoicesById = new Map(invoices.map((invoice) => [invoice.id.toString(), invoice]));
+
+  const normalizedInvoices = orderedUniqueInvoiceIds.map((invoiceId) => {
+    const invoice = invoicesById.get(invoiceId.toString());
+    if (!invoice) {
+      throw new Error(`Missing invoice details for invoice ${invoiceId.toString()}`);
+    }
+
+    return normalizeInvoice(invoice, sourceMap.get(invoiceId.toString()) ?? []);
+  });
+
+  return {
+    chain: {
+      chainId: chainC.chainId,
+      rpcUrl: chainC.rpcUrl,
+      apiUrl: chainC.apiUrl,
+      authBaseUrl: chainC.authBaseUrl,
+      invoicePayment: chainC.invoicePayment
+    },
+    adminAddress: ADMIN_ADDRESS,
+    counts: {
+      created: Number(createdCount),
+      pending: Number(pendingCount),
+      total: normalizedInvoices.length
+    },
+    createdInvoiceIds: createdInvoiceIds.map((invoiceId) => invoiceId.toString()),
+    pendingInvoiceIds: pendingInvoiceIds.map((invoiceId) => invoiceId.toString()),
+    invoices: normalizedInvoices
+  } satisfies InvoiceResponseObject;
+}
+
+async function handleInvoices(_req: Request, res: Response) {
+  let serviceResponse: ServiceResponse<unknown>;
+  try {
+    const responseObject = await fetchInvoices();
+    serviceResponse = ServiceResponse.success('Fetched invoices', responseObject);
+  } catch (error) {
+    serviceResponse = ServiceResponse.failure(
+      'Failed to fetch invoices',
+      {
+        error: error instanceof Error ? error.message : String(error)
+      },
+      StatusCodes.INTERNAL_SERVER_ERROR
+    );
+  }
+
+  res.status(serviceResponse.statusCode).send(serviceResponse);
+}
+
+invoicesRouter.get('/', handleInvoices);
+invoicesRouter.post('/', handleInvoices);

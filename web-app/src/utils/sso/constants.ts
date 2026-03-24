@@ -48,5 +48,5 @@ export const ssoContracts = {
   webauthnValidator: (import.meta.env.VITE_SSO_WEBAUTHN_VALIDATOR ||
     '0xD52c9b1bA249f877C8492F64c096E37a8072982A') as `0x${string}`,
   entryPoint: (import.meta.env.VITE_SSO_ENTRYPOINT ||
-    '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108') as `0x${string}`
+    '0x38a024C0b412B9d1db8BC398140D00F5Af3093D4') as `0x${string}`
 };

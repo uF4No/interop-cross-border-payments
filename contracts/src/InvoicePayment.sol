@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {L2_NATIVE_TOKEN_VAULT_ADDR} from "era-contracts/l1-contracts/contracts/common/l2-helpers/L2ContractAddresses.sol";
-import {INativeTokenVault} from "era-contracts/l1-contracts/contracts/bridge/ntv/INativeTokenVault.sol";
-import {IInteropCenter} from "era-contracts/l1-contracts/contracts/bridgehub/IInteropCenter.sol";
-import {IInteropHandler} from "era-contracts/l1-contracts/contracts/bridgehub/IInteropHandler.sol";
-import {L2_INTEROP_CENTER, L2_STANDARD_TRIGGER_ACCOUNT_ADDR, L2_INTEROP_HANDLER} from "era-contracts/system-contracts/contracts/Constants.sol";
-import {InteropCallStarter, GasFields} from "era-contracts/l1-contracts/contracts/common/Messaging.sol";
-import {DataEncoding} from "era-contracts/l1-contracts/contracts/common/libraries/DataEncoding.sol";
-
 /// @notice Minimal ERC20 interface needed for transfers.
 interface IERC20 {
     function transferFrom(address from, address to, uint256 value) external returns (bool);
@@ -16,6 +8,40 @@ interface IERC20 {
     function approve(address spender, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
     function allowance(address owner, address spender) external view returns (uint256);
+}
+
+interface INativeTokenVault {
+    function assetId(address token) external view returns (bytes32);
+}
+
+struct InteropCallStarter {
+    bool isService;
+    address to;
+    bytes data;
+    uint256 value;
+    uint256 gasLimit;
+}
+
+struct GasFields {
+    uint256 gasLimit;
+    uint256 gasPerPubdataByteLimit;
+    address refundRecipient;
+    address gasPayer;
+    bytes customData;
+}
+
+interface IInteropCenter {
+    function requestInterop(
+        uint256 destinationChainId,
+        address refundRecipient,
+        InteropCallStarter[] calldata feePaymentCallStarters,
+        InteropCallStarter[] calldata executionCallStarters,
+        GasFields calldata gasFields
+    ) external payable;
+}
+
+interface IInteropHandler {
+    function getAliasedAccount(address account, uint256 chainId) external view returns (address);
 }
 
 /**
@@ -26,6 +52,9 @@ contract InvoicePayment {
     uint160 constant USER_CONTRACTS_OFFSET = 0x10000; // 2^16
     address constant L2_NATIVE_TOKEN_VAULT_ADDRESS = address(USER_CONTRACTS_OFFSET + 0x04);
     address constant L2_ASSET_ROUTER_ADDRESS = address(USER_CONTRACTS_OFFSET + 0x03);
+    address constant L2_INTEROP_CENTER_ADDRESS = address(USER_CONTRACTS_OFFSET + 0x0B);
+    address constant L2_STANDARD_TRIGGER_ACCOUNT_ADDRESS = address(USER_CONTRACTS_OFFSET + 0x0F);
+    address constant L2_INTEROP_HANDLER_ADDRESS = address(USER_CONTRACTS_OFFSET + 0x0D);
     
     // Cross-chain fee in ETH
     uint256 public crossChainFee = 0.001 ether; // Fee for cross-chain transfers
@@ -259,7 +288,7 @@ contract InvoicePayment {
         if (creatorChainId == block.chainid) {
             require(msg.sender == creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER)).getAliasedAccount(
+            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER_ADDRESS)).getAliasedAccount(
                 creatorRefundAddress,
                 creatorChainId
             );
@@ -314,7 +343,7 @@ contract InvoicePayment {
         if (invoice.creatorChainId == block.chainid) {
             require(msg.sender == invoice.creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER)).getAliasedAccount(
+            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER_ADDRESS)).getAliasedAccount(
                 invoice.creatorRefundAddress,
                 invoice.creatorChainId
             );
@@ -430,7 +459,7 @@ contract InvoicePayment {
 
         feePaymentCallStarters[0] = InteropCallStarter(
             true,
-            L2_STANDARD_TRIGGER_ACCOUNT_ADDR,
+            L2_STANDARD_TRIGGER_ACCOUNT_ADDRESS,
             "",
             0,
             crossChainFee
@@ -465,9 +494,9 @@ contract InvoicePayment {
 
         require(address(this).balance >= crossChainFee, "Insufficient ETH for interop call");
 
-        IInteropCenter(address(L2_INTEROP_CENTER)).requestInterop{ value: crossChainFee }(
+        IInteropCenter(address(L2_INTEROP_CENTER_ADDRESS)).requestInterop{ value: crossChainFee }(
             _recipientChainId,
-            L2_STANDARD_TRIGGER_ACCOUNT_ADDR,
+            L2_STANDARD_TRIGGER_ACCOUNT_ADDRESS,
             feePaymentCallStarters,
             executionCallStarters,
             gasFields

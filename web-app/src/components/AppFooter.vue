@@ -1,5 +1,8 @@
 <script setup lang="ts">
-const companyName = import.meta.env.VITE_COMPANY_NAME || 'Prividium™';
+import BaseIcon from './BaseIcon.vue';
+import { usePrividium } from '../composables/usePrividium';
+
+const { branding } = usePrividium();
 const year = new Date().getFullYear();
 </script>
 
@@ -10,7 +13,7 @@ const year = new Date().getFullYear();
       
       <div class="flex flex-col md:flex-row justify-between items-center w-full gap-6">
         <div class="flex flex-col items-center md:items-start gap-1">
-          <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest">{{ companyName }}</p>
+          <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest">{{ branding.companyName }}</p>
           <p class="text-[10px] text-slate-400 uppercase tracking-[0.2em]">&copy; {{ year }} Prividium™ Gateway</p>
         </div>
         

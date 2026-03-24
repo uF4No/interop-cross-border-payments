@@ -7,6 +7,17 @@ import { getPasskeySignatureFromPublicKeyBytes } from 'zksync-sso-stable/utils';
 import { RP_ID, STORAGE_KEY_ACCOUNT, STORAGE_KEY_PASSKEY, ssoContracts } from './constants';
 import type { PasskeyCredential } from './types';
 
+const ACCOUNT_STORAGE_EVENT = 'sso-account-storage-updated';
+const ACCOUNT_ENTRYPOINT_ABI = [
+  {
+    type: 'function',
+    name: 'entryPoint',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view'
+  }
+] as const;
+
 const base64UrlToBytes = (input: string): Uint8Array => {
   const base64 = input.replace(/-/g, '+').replace(/_/g, '/');
   const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
@@ -116,7 +127,23 @@ export async function selectExistingPasskey(
     throw new Error('No account found for selected passkey');
   }
 
-  const accountAddress = accounts[0];
+  const expectedEntryPoint = ssoContracts.entryPoint.toLowerCase();
+  let accountAddress: Address | null = null;
+
+  for (const candidate of accounts) {
+    const candidateEntryPoint = await readAccountEntryPoint(authClient, candidate);
+    if (candidateEntryPoint?.toLowerCase() === expectedEntryPoint) {
+      accountAddress = candidate;
+      break;
+    }
+  }
+
+  if (!accountAddress) {
+    throw new Error(
+      `No account found for this passkey on the configured EntryPoint (${ssoContracts.entryPoint}). Create a new passkey account.`
+    );
+  }
+
   const rawKey = (await authClient.readContract({
     address: ssoContracts.webauthnValidator,
     abi: WEBAUTHN_VALIDATOR_ABI,
@@ -157,11 +184,36 @@ export async function selectExistingPasskey(
 // Save passkey to localStorage
 export function savePasskeyCredentials(passkeyCredentials: PasskeyCredential) {
   localStorage.setItem(STORAGE_KEY_PASSKEY, JSON.stringify(passkeyCredentials));
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
 }
 
 // Save wallet address to localStorage
 export function saveAccountAddress(accountAddress: Address) {
   localStorage.setItem(STORAGE_KEY_ACCOUNT, accountAddress);
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
+}
+
+export function clearSavedAccountAddress() {
+  localStorage.removeItem(STORAGE_KEY_ACCOUNT);
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
+}
+
+export async function readAccountEntryPoint(
+  client: PublicClient,
+  accountAddress: Address,
+  fromAddress?: Address
+): Promise<Address | null> {
+  try {
+    const entryPoint = (await client.readContract({
+      address: accountAddress,
+      abi: ACCOUNT_ENTRYPOINT_ABI,
+      functionName: 'entryPoint',
+      account: fromAddress ?? accountAddress
+    })) as Address;
+    return entryPoint;
+  } catch (_error) {
+    return null;
+  }
 }
 
 // Reset passkey
@@ -173,6 +225,7 @@ export function handleResetPasskey() {
   ) {
     localStorage.removeItem(STORAGE_KEY_PASSKEY);
     localStorage.removeItem(STORAGE_KEY_ACCOUNT);
+    window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
     location.reload();
   }
 }

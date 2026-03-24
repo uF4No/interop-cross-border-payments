@@ -1,6 +1,6 @@
 # Backend server
 
-There are five endpoints for the backend server:
+There are six endpoints for the backend server:
 
 1. `/health-check` (GET): returns a successful response if the server is
    healthy.
@@ -16,6 +16,10 @@ There are five endpoints for the backend server:
    and its shadow account on the L1. If any of the balances are below the
    `MIN_BALANCE`, it sends some funds to them. This endpoint should be removed
    for mainnet deployments.
+6. `/invoices` (GET, POST): reads the chain C `InvoicePayment` contract from
+   `config/contracts.json`, authenticates as the hardcoded admin account, and
+   returns the admin's created and pending invoices in normalized JSON for the
+   web app.
 
 The server also runs a continuous process that tracks pending L2 <-> L1
 transactions and finalizes them once they are fully executed.
@@ -49,6 +53,31 @@ Success response includes:
 
 If deploy succeeds but permissions/linking fails, the endpoint returns `500` with
 `responseObject` populated so the client can display a precise setup error.
+
+## `/invoices` request/response
+
+This endpoint is designed for the web app dashboard and reads invoices from
+chain C using the `InvoicePayment` contract address stored in
+`config/contracts.json` under `chains.c.invoicePayment`.
+
+Behavior:
+
+1. Loads chain C RPC, API, auth base URL, and `InvoicePayment` address from the
+   generated contracts config.
+2. Authenticates against chain C as the hardcoded admin account.
+3. Reads created and pending invoice counts for the admin address, fetches the
+   invoice IDs, then loads the full invoice details in chunks.
+4. Returns normalized invoice JSON with merged `created` and `pending` source
+   tags.
+
+Response payload includes:
+
+- `responseObject.chain`
+- `responseObject.adminAddress`
+- `responseObject.counts`
+- `responseObject.createdInvoiceIds`
+- `responseObject.pendingInvoiceIds`
+- `responseObject.invoices`
 
 ## Environment Variables
 
@@ -97,6 +126,16 @@ This service reads contract addresses from the canonical config:
 The path is provided via `CONTRACTS_CONFIG_PATH` (written by the setup job).
 Do not edit contract addresses directly in `backend/.env`; use `pnpm -C setup refresh:env`
 after running setup scripts.
+
+For `/invoices`, ensure `chains.c` in `config/contracts.json` includes:
+
+- `rpcUrl`
+- `apiUrl`
+- `authBaseUrl`
+- `invoicePayment`
+
+The endpoint uses the hardcoded admin credentials from the request task and does
+not require a dedicated env var for those values.
 
 ## Scripts
 

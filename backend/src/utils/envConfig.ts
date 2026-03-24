@@ -3,6 +3,21 @@ import { z } from 'zod';
 
 dotenv.config();
 
+const optionalAddress = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.string().length(42).optional()
+);
+
+const optionalUrl = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.string().url().optional()
+);
+
+const optionalPositiveInt = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.coerce.number().int().positive().optional()
+);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
@@ -22,6 +37,9 @@ const envSchema = z.object({
 
   PRIVIDIUM_RPC_URL: z.string().url().default('https://zksync-os-testnet-alpha.zksync.dev/'),
   PRIVIDIUM_CHAIN_ID: z.coerce.number().int().positive().default(8022833),
+  PRIVIDIUM_CHAIN_A_ID: optionalPositiveInt,
+  PRIVIDIUM_CHAIN_B_ID: optionalPositiveInt,
+  PRIVIDIUM_CHAIN_C_ID: optionalPositiveInt,
 
   L2_INTEROP_CENTER: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
@@ -71,10 +89,18 @@ const envSchema = z.object({
     z.string().optional()
   ),
 
+  INVOICE_PAYMENT_CONTRACT: optionalAddress,
+  TOKEN_USDC_ADDRESS: optionalAddress,
+  TOKEN_SGD_ADDRESS: optionalAddress,
+  TOKEN_TBILL_ADDRESS: optionalAddress,
+  TOKEN_USDC_CHAIN_C_ADDRESS: optionalAddress,
+  TOKEN_SGD_CHAIN_C_ADDRESS: optionalAddress,
+  TOKEN_TBILL_CHAIN_C_ADDRESS: optionalAddress,
+
   PRIVIDIUM_API_URL: z.string().url(),
-  PRIVIDIUM_AUTH_BASE_URL: z.string().url().optional(),
+  PRIVIDIUM_AUTH_BASE_URL: optionalUrl,
   SIWE_DOMAIN: z.string().min(1).optional(),
-  SIWE_URI: z.string().url().optional(),
+  SIWE_URI: optionalUrl,
   SIWE_CHALLENGE_PATH: z.string().min(1).default('/siwe-messages'),
   SIWE_LOGIN_PATH: z.string().min(1).default('/auth/login/crypto-native'),
 

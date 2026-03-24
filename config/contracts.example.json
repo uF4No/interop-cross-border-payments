@@ -1,8 +1,129 @@
 {
+  "metadata": {
+    "generatedAt": "2026-03-24T12:00:00.000Z",
+    "deployer": "0x...",
+    "admin": "0x..."
+  },
+  "chains": {
+    "a": {
+      "chainId": 6565,
+      "rpcUrl": "http://localhost:3050",
+      "apiUrl": "http://localhost:8000/api",
+      "authBaseUrl": "http://localhost:3001",
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0x...",
+      "admin": "0x...",
+      "sso": {
+        "factory": "0x...",
+        "beacon": "0x...",
+        "accountImplementation": "0x...",
+        "ssoBytecodeHash": "0x...",
+        "webauthnValidator": "0x...",
+        "eoaValidator": "0x...",
+        "sessionValidator": "0x...",
+        "guardianExecutor": "0x...",
+        "entryPoint": "0x..."
+      },
+      "tokens": {
+        "usdc": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "sgd": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "tbill": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        }
+      }
+    },
+    "b": {
+      "chainId": 6566,
+      "rpcUrl": "http://localhost:3051",
+      "apiUrl": "http://localhost:8300/api",
+      "authBaseUrl": "http://localhost:3301",
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0x...",
+      "admin": "0x...",
+      "sso": {
+        "factory": "0x...",
+        "beacon": "0x...",
+        "accountImplementation": "0x...",
+        "ssoBytecodeHash": "0x...",
+        "webauthnValidator": "0x...",
+        "eoaValidator": "0x...",
+        "sessionValidator": "0x...",
+        "guardianExecutor": "0x...",
+        "entryPoint": "0x..."
+      },
+      "tokens": {
+        "usdc": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "sgd": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "tbill": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        }
+      }
+    },
+    "c": {
+      "chainId": 6567,
+      "rpcUrl": "http://localhost:3052",
+      "apiUrl": "http://localhost:8600/api",
+      "authBaseUrl": "http://localhost:3601",
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0x...",
+      "admin": "0x...",
+      "invoicePayment": "0x...",
+      "tokens": {
+        "usdc": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "sgd": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        },
+        "tbill": {
+          "address": "0x...",
+          "assetId": "0x...",
+          "deployer": "0x...",
+          "admin": "0x..."
+        }
+      }
+    }
+  },
   "sso": {
     "factory": "0x...",
     "beacon": "0x...",
     "accountImplementation": "0x...",
+    "ssoBytecodeHash": "0x...",
     "webauthnValidator": "0x...",
     "eoaValidator": "0x...",
     "sessionValidator": "0x...",
@@ -11,9 +132,7 @@
   },
   "interop": {
     "l1InteropHandler": "0x...",
-    "l2InteropCenter": "0x..."
+    "l2InteropCenter": "0x0000000000000000000000000000000000010010"
   },
-  "app": {
-    "counter": "0x..."
-  }
+  "app": {}
 }

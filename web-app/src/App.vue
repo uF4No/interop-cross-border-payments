@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { watchEffect } from 'vue';
 import AppFooter from './components/AppFooter.vue';
 import AppNavbar from './components/AppNavbar.vue';
-const accentColor = import.meta.env.VITE_ACCENT_COLOR || '#2563eb';
+import { usePrividium } from './composables/usePrividium';
 
-const companyName = import.meta.env.VITE_COMPANY_NAME || 'Prividium™';
+const { branding } = usePrividium();
 
-onMounted(() => {
-  document.documentElement.style.setProperty('--accent', accentColor);
-  document.title = `${companyName} | Prividium`;
+watchEffect(() => {
+  document.documentElement.style.setProperty('--accent', branding.value.accentColor);
+  document.title = `${branding.value.companyName} | Prividium`;
 });
 </script>
 

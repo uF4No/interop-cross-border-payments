@@ -71,8 +71,29 @@ export interface AuthResponse {
 export interface Application {
   id: string;
   name: string;
-  origin: string;
+  origin: string | null;
   oauthClientId: string;
+  oauthRedirectUris: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ApplicationPagination {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ApplicationList {
+  items: Application[];
+  pagination: ApplicationPagination;
+}
+
+export interface ApplicationUpsertBody {
+  name: string;
+  origin: string;
   oauthRedirectUris: string[];
 }
 
@@ -123,9 +144,29 @@ export async function postAuthLoginCryptoNative(
 
 export async function postApplications(
   client: ApiClient,
-  body: { name: string; origin: string; oauthRedirectUris: string[] }
+  body: ApplicationUpsertBody
 ): Promise<ApiResponse<Application>> {
   return client.post<Application>('/applications/', body);
+}
+
+export async function getApplications(
+  client: ApiClient,
+  params?: { limit?: number; offset?: number }
+): Promise<ApiResponse<ApplicationList>> {
+  const search = new URLSearchParams();
+  if (params?.limit !== undefined) search.set('limit', params.limit.toString());
+  if (params?.offset !== undefined) search.set('offset', params.offset.toString());
+  const query = search.toString();
+  const path = `/applications/${query ? `?${query}` : ''}`;
+  return client.get<ApplicationList>(path);
+}
+
+export async function putApplication(
+  client: ApiClient,
+  id: string,
+  body: ApplicationUpsertBody
+): Promise<ApiResponse<Application>> {
+  return client.put<Application>(`/applications/${encodeURIComponent(id)}`, body);
 }
 
 export async function postContracts(

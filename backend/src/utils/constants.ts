@@ -1,20 +1,34 @@
 import { join } from 'node:path';
 import { defineChain } from 'viem';
 
-import { loadContractsConfig, warnIfMismatch } from './contractsConfig';
+import {
+  getPreferredChainDeployment,
+  loadContractsConfig,
+  warnIfMismatch,
+  type ContractsConfig
+} from './contractsConfig';
 import { env } from './envConfig';
 
 const contractsConfig = loadContractsConfig();
-const configInterop = contractsConfig?.interop ?? {};
-const configSso = contractsConfig?.sso ?? {};
+const activeChainDeployment = getPreferredChainDeployment(contractsConfig, env.PRIVIDIUM_CHAIN_ID);
+const configSso = activeChainDeployment?.deployment.sso ?? contractsConfig?.sso ?? {};
+const configInterop: NonNullable<ContractsConfig['interop']> = contractsConfig?.interop ?? {};
+const activeChainInteropCenter = activeChainDeployment?.deployment.interopCenter;
 
 warnIfMismatch('L1_INTEROP_HANDLER', configInterop.l1InteropHandler, env.L1_INTEROP_HANDLER);
-warnIfMismatch('L2_INTEROP_CENTER', configInterop.l2InteropCenter, env.L2_INTEROP_CENTER);
+warnIfMismatch(
+  'L2_INTEROP_CENTER',
+  configInterop.l2InteropCenter ?? activeChainInteropCenter,
+  env.L2_INTEROP_CENTER
+);
+
+export const ACTIVE_CHAIN_DEPLOYMENT = activeChainDeployment;
 
 // Contract addresses
 export const L1_INTEROP_HANDLER = (configInterop.l1InteropHandler ??
   env.L1_INTEROP_HANDLER) as `0x${string}`;
 export const L2_INTEROP_CENTER = (configInterop.l2InteropCenter ??
+  activeChainInteropCenter ??
   env.L2_INTEROP_CENTER) as `0x${string}`;
 export const BASE_TOKEN_ADDRESS: `0x${string}` = '0x000000000000000000000000000000000000800A';
 

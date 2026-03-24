@@ -10,8 +10,10 @@ import requestLogger from '@/middleware/requestLogger';
 
 import { deployAccountRouter } from './api/deployAccountRouter';
 import { faucetRouter } from './api/faucetRouter';
+import { fundTokensRouter } from './api/fundTokensRouter';
 import { healthCheckRouter } from './api/healthCheckRouter';
 import { interopTxRouter } from './api/interopTxRouter';
+import { invoicesRouter } from './api/invoicesRouter';
 import { statusRouter } from './api/statusRouter';
 import { ensureFactoryDeployed } from './utils/accounts/factory';
 import { TXNS_STATE_FOLDER } from './utils/constants';
@@ -38,8 +40,10 @@ app.use(requestLogger);
 app.use('/health-check', healthCheckRouter);
 app.use('/deploy-account', deployAccountRouter);
 app.use('/faucet', faucetRouter);
+app.use('/fund-tokens', fundTokensRouter);
 app.use('/status', statusRouter);
 app.use('/new-l1-interop-tx', interopTxRouter);
+app.use('/invoices', invoicesRouter);
 
 // Error handlers
 app.use(errorHandler());

@@ -1,5 +1,10 @@
 import { type Address, type PublicClient, encodeFunctionData, getContract, pad, toHex } from 'viem';
-import { loadExistingPasskey } from '../utils/sso/passkeys';
+import { ssoContracts } from '../utils/sso/constants';
+import {
+  clearSavedAccountAddress,
+  loadExistingPasskey,
+  readAccountEntryPoint
+} from '../utils/sso/passkeys';
 import { sendTxWithPasskey } from '../utils/sso/sendTxWithPasskey';
 
 // Counter Contract ABI
@@ -92,6 +97,17 @@ export function useCounterContract(
     const { savedPasskey, savedAccount } = loadExistingPasskey();
     if (!savedPasskey || !savedAccount) {
       throw new Error('No SSO account found. Create and link a passkey first.');
+    }
+
+    const accountEntryPoint = await readAccountEntryPoint(rpcClient, savedAccount);
+    if (
+      accountEntryPoint &&
+      accountEntryPoint.toLowerCase() !== ssoContracts.entryPoint.toLowerCase()
+    ) {
+      clearSavedAccountAddress();
+      throw new Error(
+        `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but this app expects ${ssoContracts.entryPoint}. Re-login and create/link a compatible passkey account.`
+      );
     }
 
     const txData = [
