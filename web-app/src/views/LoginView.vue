@@ -6,7 +6,12 @@ import BaseIcon from '../components/BaseIcon.vue';
 import { usePrividium } from '../composables/usePrividium';
 import { useRpcClient } from '../composables/useRpcClient';
 import { DEPLOY_ACCOUNT_ENDPOINT } from '../utils/sso/constants';
-import { createNewPasskey, saveAccountAddress, selectExistingPasskey } from '../utils/sso/passkeys';
+import {
+  createNewPasskey,
+  saveAccountAddress,
+  savePasskeyCredentials,
+  selectExistingPasskey
+} from '../utils/sso/passkeys';
 
 const router = useRouter();
 const route = useRoute();
@@ -132,7 +137,8 @@ const createPasskey = async () => {
     }
     const accountAddressHex = accountAddress as `0x${string}`;
 
-    // 3. Save account and refresh the profile with linked wallets from backend.
+    // 3. Save passkey+account only after deploy/link succeeds, then refresh profile.
+    savePasskeyCredentials(creds);
     saveAccountAddress(accountAddressHex);
     await refreshUserProfile();
     completedAccountAddress.value = accountAddressHex;

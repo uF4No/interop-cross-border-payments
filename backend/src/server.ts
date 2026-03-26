@@ -9,6 +9,7 @@ import rateLimiter from '@/middleware/rateLimiter';
 import requestLogger from '@/middleware/requestLogger';
 
 import { deployAccountRouter } from './api/deployAccountRouter';
+import { directUserOpRouter } from './api/directUserOpRouter';
 import { faucetRouter } from './api/faucetRouter';
 import { fundTokensRouter } from './api/fundTokensRouter';
 import { healthCheckRouter } from './api/healthCheckRouter';
@@ -39,6 +40,7 @@ app.use(requestLogger);
 // Routes
 app.use('/health-check', healthCheckRouter);
 app.use('/deploy-account', deployAccountRouter);
+app.use('/userops', directUserOpRouter);
 app.use('/faucet', faucetRouter);
 app.use('/fund-tokens', fundTokensRouter);
 app.use('/status', statusRouter);

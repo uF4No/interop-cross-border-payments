@@ -87,7 +87,7 @@ interface IInteropCenter {
 pragma solidity ^0.8.24;
 
 interface IInteropHandler {
-    function getAliasedAccount(address account, uint256 chainId) external view returns (address);
+    function getShadowAccountAddress(uint256 ownerChainId, address ownerAddress) external view returns (address);
 }
 `
   },
@@ -296,7 +296,7 @@ function shouldRebuildArtifacts(contractsDir: string): boolean {
 function createCompatibilityWorkspace(tempRoot: string, contractsDir: string): void {
   writeTextFile(
     path.join(tempRoot, 'foundry.toml'),
-    `[profile.default]\nsrc = "src"\nout = "out"\nlibs = []\nauto_detect_solc = true\noptimizer = true\noptimizer_runs = 200\nvia_ir = true\nremappings = [\n  "era-contracts/=era-contracts/",\n  "@openzeppelin/contracts/=@openzeppelin/contracts/"\n]\n`
+    `[profile.default]\nsrc = "src"\nout = "out"\nlibs = []\nauto_detect_solc = true\noptimizer = true\noptimizer_runs = 200\nvia_ir = true\nbytecode_hash = "none"\ncbor_metadata = false\nrevert_strings = "strip"\nremappings = [\n  "era-contracts/=era-contracts/",\n  "@openzeppelin/contracts/=@openzeppelin/contracts/"\n]\n`
   );
 
   const invoiceDestination = path.join(tempRoot, INVOICE_SOURCE);
@@ -342,7 +342,7 @@ export async function ensureContractsArtifacts(contractsDir: string): Promise<vo
   try {
     createCompatibilityWorkspace(tempRoot, contractsDir);
     await execCmd(
-      'forge build --via-ir src/InvoicePayment.sol src/TestnetERC20Token.sol --force',
+      'forge build --via-ir --revert-strings strip --no-metadata src/InvoicePayment.sol src/TestnetERC20Token.sol --force',
       tempRoot
     );
     copyBuiltArtifact(tempRoot, contractsDir, INVOICE_ARTIFACT);

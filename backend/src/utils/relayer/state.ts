@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import type { Address } from 'viem';
+import { getAddress, type Address } from 'viem';
 
 import { FINALIZED_TXS_FILE, PENDING_TXS_FILE } from '../constants';
 import type { FinalizedTxnState, Metadata, PendingTxnState } from '../types';
@@ -16,8 +16,12 @@ export function loadPendingTxs(accountAddress?: Address): PendingTxnState[] {
       return [];
     }
     const json = JSON.parse(sanitized);
-    if (accountAddress)
-      return json.filter((tx: PendingTxnState) => tx.accountAddress === accountAddress);
+    if (accountAddress) {
+      const normalizedAccount = getAddress(accountAddress).toLowerCase();
+      return json.filter(
+        (tx: PendingTxnState) => getAddress(tx.accountAddress).toLowerCase() === normalizedAccount
+      );
+    }
     return json;
   }
   return [];
@@ -31,8 +35,12 @@ export function loadFinalizedTxs(accountAddress?: Address): FinalizedTxnState[] 
   if (existsSync(FINALIZED_TXS_FILE)) {
     const data = readFileSync(FINALIZED_TXS_FILE, 'utf-8');
     const json = JSON.parse(data);
-    if (accountAddress)
-      return json.filter((tx: FinalizedTxnState) => tx.accountAddress === accountAddress);
+    if (accountAddress) {
+      const normalizedAccount = getAddress(accountAddress).toLowerCase();
+      return json.filter(
+        (tx: FinalizedTxnState) => getAddress(tx.accountAddress).toLowerCase() === normalizedAccount
+      );
+    }
     return json;
   }
   return [];
@@ -45,6 +53,7 @@ export function saveFinalizedTxs(txs: FinalizedTxnState[]) {
 export function addPendingTx(hash: `0x${string}`, metadata: Metadata, accountAddress: Address) {
   const pending = loadPendingTxs();
   const finalized = loadFinalizedTxs();
+  const normalizedAccountAddress = getAddress(accountAddress);
   if (pending.some((tx) => tx.hash === hash) || finalized.some((tx) => tx.l2TxHash === hash)) {
     return;
   }
@@ -54,7 +63,7 @@ export function addPendingTx(hash: `0x${string}`, metadata: Metadata, accountAdd
     status: 'pending',
     action: metadata.action || 'Unknown',
     amount: metadata.amount || '0',
-    accountAddress
+    accountAddress: normalizedAccountAddress
   });
   savePendingTxs(pending);
 }

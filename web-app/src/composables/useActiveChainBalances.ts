@@ -1,8 +1,17 @@
-import { type Address, formatUnits, getAddress, isAddress, parseAbi } from 'viem';
+import {
+  type Address,
+  type Chain,
+  type Transport,
+  createPublicClient,
+  formatUnits,
+  getAddress,
+  http,
+  isAddress,
+  parseAbi
+} from 'viem';
 import { computed, ref, watch } from 'vue';
 
 import { usePrividium } from './usePrividium';
-import { useRpcClient } from './useRpcClient';
 import { useSsoAccount } from './useSsoAccount';
 
 type TokenSymbol = 'USDC' | 'SGD' | 'TBILL';
@@ -72,10 +81,13 @@ function formatReadError(error: unknown) {
   return firstLine || 'Unable to load wallet balances.';
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export function useActiveChainBalances() {
-  const rpcClient = useRpcClient();
   const { account } = useSsoAccount();
-  const { getChain, selectedChainKey } = usePrividium();
+  const { getChain, getTransport, selectedChainKey } = usePrividium();
 
   const rows = ref<ActiveChainBalanceRow[]>([]);
   const isLoading = ref(false);
@@ -83,12 +95,67 @@ export function useActiveChainBalances() {
   let requestId = 0;
 
   const nativeSymbol = computed(() => getChain().nativeCurrency?.symbol || 'ETH');
+  const readClient = computed(() => {
+    const chain = getChain() as unknown as Chain;
+    const rpcUrl = chain.rpcUrls.default.http[0] ?? chain.rpcUrls.public.http[0];
+
+    return createPublicClient({
+      chain,
+      transport: rpcUrl ? http(rpcUrl) : (getTransport() as unknown as Transport)
+    });
+  });
+
+  const loadBalanceRows = async (userAddress: Address, currentChainKey: 'A' | 'B') => {
+    const client = readClient.value;
+    const configuredTokens = getConfiguredTokens(currentChainKey);
+
+    const nativeBalancePromise = client.getBalance({ address: userAddress });
+    const tokenRowsPromise = Promise.all(
+      configuredTokens.map(async (token): Promise<ActiveChainBalanceRow> => {
+        const [rawBalance, decimals] = await Promise.all([
+          client.readContract({
+            address: token.address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [userAddress]
+          }),
+          client.readContract({
+            address: token.address,
+            abi: erc20Abi,
+            functionName: 'decimals'
+          })
+        ]);
+
+        return {
+          asset: token.symbol,
+          type: 'token',
+          balance: formatTokenBalance(rawBalance, decimals),
+          rawBalance,
+          decimals,
+          address: token.address
+        };
+      })
+    );
+
+    const [nativeBalance, tokenRows] = await Promise.all([nativeBalancePromise, tokenRowsPromise]);
+
+    return [
+      {
+        asset: nativeSymbol.value,
+        type: 'native' as const,
+        balance: formatTokenBalance(nativeBalance, 18),
+        rawBalance: nativeBalance,
+        decimals: 18
+      },
+      ...tokenRows
+    ];
+  };
 
   const refresh = async () => {
     requestId += 1;
     const activeRequestId = requestId;
 
-    if (!account.value || !rpcClient.value) {
+    if (!account.value) {
       rows.value = [];
       error.value = '';
       isLoading.value = false;
@@ -96,75 +163,45 @@ export function useActiveChainBalances() {
     }
 
     const userAddress = account.value;
-    const client = rpcClient.value;
     const currentChainKey = selectedChainKey.value;
-    const configuredTokens = getConfiguredTokens(currentChainKey);
+    const previousRows = rows.value;
 
-    rows.value = [];
     error.value = '';
     isLoading.value = true;
 
     try {
-      const nativeBalancePromise = client.getBalance({ address: userAddress });
-      const tokenRowsPromise = Promise.all(
-        configuredTokens.map(async (token): Promise<ActiveChainBalanceRow> => {
-          const [rawBalance, decimals] = await Promise.all([
-            client.readContract({
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [userAddress],
-              account: userAddress
-            }),
-            client.readContract({
-              address: token.address,
-              abi: erc20Abi,
-              functionName: 'decimals',
-              account: userAddress
-            })
-          ]);
-
-          return {
-            asset: token.symbol,
-            type: 'token',
-            balance: formatTokenBalance(rawBalance, decimals),
-            rawBalance,
-            decimals,
-            address: token.address
-          };
-        })
-      );
-
-      const [nativeBalance, tokenRows] = await Promise.all([nativeBalancePromise, tokenRowsPromise]);
+      const nextRows = await loadBalanceRows(userAddress, currentChainKey);
       if (activeRequestId !== requestId) {
         return;
       }
 
-      rows.value = [
-        {
-          asset: nativeSymbol.value,
-          type: 'native',
-          balance: formatTokenBalance(nativeBalance, 18),
-          rawBalance: nativeBalance,
-          decimals: 18
-        },
-        ...tokenRows
-      ];
-    } catch (refreshError) {
-      if (activeRequestId !== requestId) {
-        return;
-      }
+      rows.value = nextRows;
+    } catch (initialError) {
+      try {
+        await sleep(400);
+        const nextRows = await loadBalanceRows(userAddress, currentChainKey);
+        if (activeRequestId !== requestId) {
+          return;
+        }
 
-      rows.value = [];
-      error.value = formatReadError(refreshError);
+        rows.value = nextRows;
+      } catch (refreshError) {
+        if (activeRequestId !== requestId) {
+          return;
+        }
+
+        rows.value = previousRows;
+        error.value = formatReadError(refreshError ?? initialError);
+      }
     } finally {
-      if (activeRequestId === requestId) {
-        isLoading.value = false;
+      if (activeRequestId !== requestId) {
+        return;
       }
+      isLoading.value = false;
     }
   };
 
-  watch([account, rpcClient, selectedChainKey], () => {
+  watch([account, selectedChainKey], () => {
     void refresh();
   }, { immediate: true });
 

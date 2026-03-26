@@ -469,6 +469,16 @@ async function main() {
         ssoImplementation: ssoOnB.accountImplementation,
         ssoBytecodeHash: ssoOnB.ssoBytecodeHash
       }
+    ],
+    bundlers: [
+      {
+        serviceName: 'bundler-l2a',
+        entryPoint: ssoOnA.entryPoint
+      },
+      {
+        serviceName: 'bundler-l2b',
+        entryPoint: ssoOnB.entryPoint
+      }
     ]
   });
 

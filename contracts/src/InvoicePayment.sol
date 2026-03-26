@@ -41,7 +41,7 @@ interface IInteropCenter {
 }
 
 interface IInteropHandler {
-    function getAliasedAccount(address account, uint256 chainId) external view returns (address);
+    function getShadowAccountAddress(uint256 ownerChainId, address ownerAddress) external view returns (address);
 }
 
 /**
@@ -189,6 +189,17 @@ contract InvoicePayment {
     
     event CrossChainFeeUpdated(uint256 newFee);
     event CrossChainTransferInitiated(address token, uint256 amount, address recipient, uint256 chainId);
+
+    function _expectedCrossChainSender(address account, uint256 chainId) internal view returns (address) {
+        if (chainId == block.chainid) {
+            return account;
+        }
+
+        return IInteropHandler(address(L2_INTEROP_HANDLER_ADDRESS)).getShadowAccountAddress(
+            chainId,
+            account
+        );
+    }
     
     /**
      * @dev Remove the original whitelistToken function since we have an updated version below
@@ -282,17 +293,13 @@ contract InvoicePayment {
         require(creatorRefundAddress != address(0), "InvoicePayment: creator refund address is the zero address");
         require(recipientRefundAddress != address(0), "InvoicePayment: recipient refund address is the zero address");
         
-        // Verify that msg.sender is the correct caller based on chain
-        // If on the same chain as creator, msg.sender should equal creatorRefundAddress
-        // If on a different chain, msg.sender should be the aliased account of creatorRefundAddress
+        // Verify that msg.sender is the correct caller based on chain.
+        // On this interop stack, cross-chain execution uses the creator's shadow account.
         if (creatorChainId == block.chainid) {
             require(msg.sender == creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER_ADDRESS)).getAliasedAccount(
-                creatorRefundAddress,
-                creatorChainId
-            );
-            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be aliased account of creator refund address");
+            address expectedSender = _expectedCrossChainSender(creatorRefundAddress, creatorChainId);
+            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be shadow account of creator refund address");
         }
         
         // Create new invoice
@@ -343,11 +350,8 @@ contract InvoicePayment {
         if (invoice.creatorChainId == block.chainid) {
             require(msg.sender == invoice.creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = IInteropHandler(address(L2_INTEROP_HANDLER_ADDRESS)).getAliasedAccount(
-                invoice.creatorRefundAddress,
-                invoice.creatorChainId
-            );
-            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be aliased account of creator refund address");
+            address expectedSender = _expectedCrossChainSender(invoice.creatorRefundAddress, invoice.creatorChainId);
+            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be shadow account of creator refund address");
         }
         
         invoice.status = InvoiceStatus.Cancelled;
@@ -518,6 +522,14 @@ contract InvoicePayment {
         IERC20(token).transfer(admin, amount);
     }
     
+    /**
+     * @dev Get the total number of invoices stored in the contract
+     * @return count Number of invoices created so far
+     */
+    function getInvoiceCount() external view returns (uint256) {
+        return _nextInvoiceId - 1;
+    }
+
     /**
      * @dev Get the number of invoices created by a user
      * @param user Address of the user

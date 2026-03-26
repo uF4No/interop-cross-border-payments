@@ -9,8 +9,8 @@
           Cross-chain invoicing and settlement
         </h2>
         <p class="text-base leading-relaxed text-slate-500">
-          Invoice creation now submits a real interop bundle from the active source chain to the
-          chain C <span class="font-semibold text-slate-700">InvoicePayment</span> contract.
+          Invoice creation and payment submit real interop bundles from the active source chain to
+          the chain C <span class="font-semibold text-slate-700">InvoicePayment</span> contract.
         </p>
       </div>
 
@@ -164,175 +164,104 @@
       </button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-      <div class="enterprise-card p-8 space-y-6">
-        <div class="flex items-center justify-between gap-4">
-          <div>
-            <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Interop Progress</p>
-            <h3 class="text-lg font-bold text-slate-900">Invoice Execution</h3>
-          </div>
-          <span
-            class="rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]"
-            :class="interopStatusClass"
-          >
-            {{ interopStatusLabel }}
-          </span>
+    <div class="enterprise-card p-8 space-y-6">
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Interop Progress</p>
+          <h3 class="text-lg font-bold text-slate-900">Invoice Execution</h3>
         </div>
-
-        <p class="text-sm text-slate-500">
-          {{ interopMessage || 'Submit an invoice to start the cross-chain workflow.' }}
-        </p>
-
-        <div class="space-y-3">
-          <div
-            v-for="step in interopSteps"
-            :key="step.key"
-            class="flex items-start gap-4 rounded-2xl border px-4 py-4 transition-colors"
-            :class="stepCardClass(step.key)"
-          >
-            <div
-              class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border text-xs font-black"
-              :class="stepIconClass(step.key)"
-            >
-              <BaseIcon
-                v-if="stepState(step.key) === 'complete'"
-                name="CheckIcon"
-                class="w-4 h-4"
-              />
-              <BaseIcon
-                v-else-if="stepState(step.key) === 'current'"
-                name="ArrowPathIcon"
-                class="w-4 h-4 animate-spin"
-              />
-              <BaseIcon
-                v-else-if="stepState(step.key) === 'failed'"
-                name="XMarkIcon"
-                class="w-4 h-4"
-              />
-              <span v-else>{{ step.order }}</span>
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-bold text-slate-900">{{ step.label }}</p>
-              <p class="mt-1 text-sm text-slate-500">{{ step.description }}</p>
-            </div>
-          </div>
-        </div>
-
-        <div
-          v-if="interopSourceTxHash || interopBundleHash || interopInvoiceId"
-          class="space-y-3 rounded-3xl border border-slate-100 bg-slate-50 px-5 py-5"
+        <span
+          class="rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]"
+          :class="interopStatusClass"
         >
-          <div v-if="interopSourceTxHash" class="flex items-center justify-between gap-4 text-xs">
-            <span class="font-black uppercase tracking-[0.18em] text-slate-400">Source tx</span>
-            <span class="font-mono text-slate-600">{{ truncateHash(interopSourceTxHash) }}</span>
-          </div>
-          <div v-if="interopBundleHash" class="flex items-center justify-between gap-4 text-xs">
-            <span class="font-black uppercase tracking-[0.18em] text-slate-400">Bundle</span>
-            <span class="font-mono text-slate-600">{{ truncateHash(interopBundleHash) }}</span>
-          </div>
-          <div v-if="interopInvoiceId" class="flex items-center justify-between gap-4 text-xs">
-            <span class="font-black uppercase tracking-[0.18em] text-slate-400">Invoice ID</span>
-            <span class="font-mono text-slate-600">{{ interopInvoiceId }}</span>
-          </div>
-        </div>
-
-        <div
-          v-if="interopError"
-          class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
-        >
-          {{ interopError }}
-        </div>
+          {{ interopStatusLabel }}
+        </span>
       </div>
 
-      <div class="enterprise-card p-8 space-y-6">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-bold text-slate-900">System Status</h3>
-          <div class="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center border border-slate-100">
-            <BaseIcon name="ShieldCheckIcon" class="w-5 h-5 text-slate-400" />
-          </div>
-        </div>
+      <p class="text-sm text-slate-500">
+        {{ interopMessage || 'Create or pay an invoice to start the cross-chain workflow.' }}
+      </p>
 
-        <div class="space-y-4">
-          <div class="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
-            <span class="text-sm font-medium text-slate-600">Interop route</span>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-bold" :class="isConfigured ? 'text-green-600' : 'text-red-500'">
-                {{ isConfigured ? `${sourceChainLabel} -> Chain C` : 'Config missing' }}
-              </span>
+      <div class="overflow-x-auto pb-2">
+        <div class="flex min-w-[980px] items-start">
+          <template v-for="(step, index) in interopSteps" :key="step.key">
+            <div class="flex min-w-0 flex-1 items-start">
+              <div class="flex min-w-[180px] flex-1 flex-col items-center text-center">
+                <div
+                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-xs font-black"
+                  :class="stepIconClass(step.key)"
+                >
+                  <BaseIcon
+                    v-if="stepState(step.key) === 'complete'"
+                    name="CheckIcon"
+                    class="w-4 h-4"
+                  />
+                  <BaseIcon
+                    v-else-if="stepState(step.key) === 'current'"
+                    name="ArrowPathIcon"
+                    class="w-4 h-4 animate-spin"
+                  />
+                  <BaseIcon
+                    v-else-if="stepState(step.key) === 'failed'"
+                    name="XMarkIcon"
+                    class="w-4 h-4"
+                  />
+                  <span v-else>{{ step.order }}</span>
+                </div>
+                <div
+                  class="mt-4 flex w-full flex-1 flex-col rounded-2xl border px-4 py-4 transition-colors"
+                  :class="stepCardClass(step.key)"
+                >
+                  <p class="text-sm font-bold text-slate-900">{{ step.label }}</p>
+                  <p class="mt-1 text-sm text-slate-500">{{ step.description }}</p>
+                </div>
+              </div>
+
               <div
-                class="w-2 h-2 rounded-full"
-                :class="isConfigured ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]' : 'bg-red-500'"
+                v-if="index < interopSteps.length - 1"
+                class="mx-4 mt-5 h-0.5 min-w-10 flex-1 rounded-full"
+                :class="stepConnectorClass(step.key)"
               ></div>
             </div>
-          </div>
-
-          <div class="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
-            <span class="text-sm font-medium text-slate-600">Source InteropCenter</span>
-            <span class="text-xs font-mono text-slate-500">
-              {{ currentInteropCenterAddress ? truncateHash(currentInteropCenterAddress, 8, 6) : 'Unavailable' }}
-            </span>
-          </div>
-
-          <div class="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100">
-            <span class="text-sm font-medium text-slate-600">Wallet Link</span>
-            <span class="text-xs font-mono text-slate-500" v-if="ssoAccount">0x...{{ ssoAccount.slice(-4) }}</span>
-            <span class="text-xs font-bold text-slate-400" v-else>Not linked</span>
-          </div>
+          </template>
         </div>
-      </div>
-    </div>
-
-    <div class="enterprise-card p-8 space-y-5">
-      <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div class="space-y-1">
-          <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Invoicing</p>
-          <h3 class="text-lg font-bold text-slate-900">Create Invoice</h3>
-          <p class="text-sm text-slate-500">
-            Submit a passkey-authenticated interop bundle from the active source chain to chain C.
-          </p>
-        </div>
-        <button
-          class="enterprise-button-primary w-full md:w-auto"
-          :disabled="isInvoiceProcessing || !canOpenInvoiceModal"
-          @click="openCreateInvoiceModal"
-        >
-          <BaseIcon name="PlusCircleIcon" class="w-5 h-5" />
-          New Invoice
-        </button>
       </div>
 
       <div
-        v-if="createInvoiceBanner"
-        class="rounded-2xl border px-4 py-3 text-sm"
-        :class="createInvoiceBannerClass"
+        v-if="interopSourceTxHash || interopBundleHash || interopInvoiceId"
+        class="space-y-3 rounded-3xl border border-slate-100 bg-slate-50 px-5 py-5"
       >
-        {{ createInvoiceBanner }}
+        <div v-if="interopSourceTxHash" class="flex items-center justify-between gap-4 text-xs">
+          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Source tx</span>
+          <span class="font-mono text-slate-600">{{ truncateHash(interopSourceTxHash) }}</span>
+        </div>
+        <div v-if="interopBundleHash" class="flex items-center justify-between gap-4 text-xs">
+          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Bundle</span>
+          <span class="font-mono text-slate-600">{{ truncateHash(interopBundleHash) }}</span>
+        </div>
+        <div v-if="interopInvoiceId" class="flex items-center justify-between gap-4 text-xs">
+          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Invoice ID</span>
+          <span class="font-mono text-slate-600">{{ interopInvoiceId }}</span>
+        </div>
       </div>
 
       <div
-        v-if="lastInvoiceDraft"
-        class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-xs text-slate-600 space-y-2"
+        v-if="interopError"
+        class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
       >
-        <p>
-          Last request:
-          <span class="font-semibold text-slate-800">{{ lastInvoiceDraft.billingTokenSymbol }}</span>
-          for
-          <span class="font-semibold text-slate-800">{{ lastInvoiceDraft.amount }}</span>
-          from chain
-          <span class="font-semibold text-slate-800">{{ lastInvoiceDraft.creatorChainId }}</span>
-          to recipient chain
-          <span class="font-semibold text-slate-800">{{ lastInvoiceDraft.recipientChainId }}</span>.
-        </p>
-        <p v-if="lastInvoiceDraft.sourceTxHash">
-          Source tx: <span class="font-mono text-slate-700">{{ lastInvoiceDraft.sourceTxHash }}</span>
-        </p>
-        <p v-if="lastInvoiceDraft.invoiceId">
-          Created invoice ID: <span class="font-mono text-slate-700">{{ lastInvoiceDraft.invoiceId }}</span>
-        </p>
+        {{ interopError }}
       </div>
     </div>
 
-    <InvoiceTableCard :key="invoiceTableRefreshKey" />
+    
+
+    <InvoiceTableCard
+      :key="invoiceTableRefreshKey"
+      :active-chain-id="activeChainId"
+      :is-interop-processing="isInvoiceProcessing"
+      :processing-invoice-id="processingInvoiceId"
+      @pay="handlePayInvoice"
+    />
 
     <CreateInvoiceModal
       v-model="isCreateInvoiceModalOpen"
@@ -404,7 +333,8 @@ import type { CreateInvoiceSubmitPayload } from '../utils/invoiceForm';
 import type {
   BackendServiceResponse,
   InvoiceRecord,
-  InvoiceResponseObject
+  InvoiceResponseObject,
+  InvoiceSourceTag
 } from '../types/invoices';
 
 type BannerTone = 'info' | 'success' | 'error';
@@ -450,7 +380,8 @@ const MAX_ERROR_MESSAGE_LENGTH = 220;
 const router = useRouter();
 const { isAuthenticated, getChain } = usePrividium();
 const { account: ssoAccount } = useSsoAccount();
-const { sourceConfig, destinationConfig, sendCreateInvoiceBundle } = useInteropInvoice();
+const { sourceConfig, destinationConfig, sendCreateInvoiceBundle, sendPayInvoiceBundle } =
+  useInteropInvoice();
 const {
   rows: balanceRows,
   isLoading: isBalancesLoading,
@@ -472,6 +403,7 @@ const interopError = ref('');
 const interopSourceTxHash = ref('');
 const interopBundleHash = ref('');
 const interopInvoiceId = ref('');
+const processingInvoiceId = ref('');
 const progressTimers = ref<number[]>([]);
 const isTokenFunding = ref(false);
 const tokenFundingNotice = ref('');
@@ -484,9 +416,6 @@ const currentInteropCenterAddress = computed(() => sourceConfig.value.interopCen
 const destinationInvoicePaymentAddress = computed(() => destinationConfig.value.invoicePayment ?? null);
 const canOpenInvoiceModal = computed(
   () => Boolean(ssoAccount.value && currentInteropCenterAddress.value && destinationInvoicePaymentAddress.value)
-);
-const isConfigured = computed(
-  () => Boolean(currentInteropCenterAddress.value && destinationInvoicePaymentAddress.value)
 );
 const isInvoiceProcessing = computed(() =>
   ['validating', 'authorizing', 'submitting', 'waiting'].includes(interopStep.value)
@@ -532,7 +461,7 @@ const interopSteps = [
     key: 'validating' as const,
     order: 1,
     label: 'Validate request',
-    description: 'Check addresses, token routing, and chain C contract configuration.'
+    description: 'Check invoice state, allowed source chain, and chain C contract configuration.'
   },
   {
     key: 'authorizing' as const,
@@ -550,13 +479,13 @@ const interopSteps = [
     key: 'waiting' as const,
     order: 4,
     label: 'Wait for chain C',
-    description: 'Poll for the resulting invoice record after the relay executes on chain C.'
+    description: 'Poll for the resulting invoice state after the relay executes on chain C.'
   },
   {
     key: 'success' as const,
     order: 5,
     label: 'Completed',
-    description: 'Invoice creation confirmed and ready in the dashboard table.'
+    description: 'Invoice update confirmed and reflected in the dashboard table.'
   }
 ] as const;
 
@@ -580,10 +509,14 @@ const toNumberValue = (value: unknown): number | null => {
   return null;
 };
 
+const isInvoiceSourceTag = (value: unknown): value is InvoiceSourceTag =>
+  value === 'created' || value === 'pending';
+
 const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   if (!isRecord(value)) return false;
 
   const id = toStringValue(value.id);
+  const creator = toStringValue(value.creator);
   const recipient = toStringValue(value.recipient);
   const billingToken = toStringValue(value.billingToken);
   const amount = toStringValue(value.amount);
@@ -591,16 +524,20 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   const creatorChainId = toNumberValue(value.creatorChainId);
   const recipientChainId = toNumberValue(value.recipientChainId);
   const text = toStringValue(value.text);
+  const sourceTags = value.sourceTags;
 
   return Boolean(
     id &&
+      creator &&
       recipient &&
       billingToken &&
       amount &&
       status &&
       creatorChainId !== null &&
       recipientChainId !== null &&
-      text !== null
+      text !== null &&
+      Array.isArray(sourceTags) &&
+      sourceTags.every(isInvoiceSourceTag)
   );
 };
 
@@ -716,6 +653,14 @@ const stepIconClass = (key: InteropStepKey) => {
   if (state === 'current') return 'border-amber-200 bg-amber-100 text-amber-700';
   if (state === 'failed') return 'border-red-200 bg-red-100 text-red-700';
   return 'border-slate-200 bg-slate-50 text-slate-400';
+};
+
+const stepConnectorClass = (key: InteropStepKey) => {
+  const state = stepState(key);
+  if (state === 'complete') return 'bg-emerald-200';
+  if (state === 'current') return 'bg-amber-200';
+  if (state === 'failed') return 'bg-red-200';
+  return 'bg-slate-200';
 };
 
 const openCreateInvoiceModal = () => {
@@ -910,9 +855,12 @@ const updateTransaction = (
 
 const fetchInvoicesSnapshot = async (): Promise<InvoiceRecord[]> => {
   const response = await fetch(getBackendUrl('/invoices'), {
+    method: 'POST',
     headers: {
-      Accept: 'application/json'
-    }
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(ssoAccount.value ? { accountAddress: ssoAccount.value } : {})
   });
 
   const payload: unknown = await response.json().catch(() => null);
@@ -990,9 +938,36 @@ const waitForInvoiceAppearance = async (
   throw new Error('Timed out waiting for the invoice to appear on chain C.');
 };
 
+const waitForInvoiceStatus = async (invoiceId: string, targetStatus: string) => {
+  const deadline = Date.now() + INVOICE_POLL_TIMEOUT_MS;
+  let lastFetchError = '';
+
+  while (Date.now() < deadline) {
+    try {
+      const invoices = await fetchInvoicesSnapshot();
+      const match = invoices.find((invoice) => invoice.id === invoiceId);
+
+      if (match && match.status.trim().toLowerCase() === targetStatus.trim().toLowerCase()) {
+        return match;
+      }
+    } catch (error) {
+      lastFetchError = formatTransactionError(error, 'Failed to read invoices while waiting for chain C.');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, INVOICE_POLL_INTERVAL_MS));
+  }
+
+  if (lastFetchError) {
+    throw new Error(lastFetchError);
+  }
+
+  throw new Error(`Timed out waiting for invoice ${invoiceId} to reach ${targetStatus}.`);
+};
+
 const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) => {
   errorMessage.value = '';
   interopError.value = '';
+  processingInvoiceId.value = '';
   createInvoiceBannerTone.value = 'info';
   createInvoiceBanner.value = 'Validating invoice request before cross-chain submission.';
   interopStep.value = 'validating';
@@ -1112,6 +1087,91 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
       hash: interopSourceTxHash.value || 'Submission failed',
       detail: interopError.value
     });
+  }
+};
+
+const handlePayInvoice = async (invoice: InvoiceRecord) => {
+  errorMessage.value = '';
+  interopError.value = '';
+  processingInvoiceId.value = invoice.id;
+  interopStep.value = 'validating';
+  interopMessage.value =
+    'Validating invoice payment and checking that the active source chain matches the recipient chain.';
+  interopSourceTxHash.value = '';
+  interopBundleHash.value = '';
+  interopInvoiceId.value = invoice.id;
+
+  const txId = addTransaction(
+    `payInvoice(${invoice.id})`,
+    'pending',
+    'Preparing bundle...',
+    'Validating invoice payment for chain C.'
+  );
+
+  try {
+    if (invoice.status.trim().toLowerCase() !== 'created') {
+      throw new Error(`Invoice ${invoice.id} is ${invoice.status} and cannot be paid.`);
+    }
+
+    if (activeChainId.value !== invoice.recipientChainId) {
+      throw new Error(
+        `Invoice ${invoice.id} can only be paid from chain ${invoice.recipientChainId}. Switch to the recipient chain and retry.`
+      );
+    }
+
+    interopStep.value = 'authorizing';
+    interopMessage.value = 'Authorizing the source-chain InteropCenter call with your passkey.';
+    updateTransaction(txId, {
+      hash: 'Authorizing passkey...',
+      detail: `Authorizing ${sourceChainLabel.value} wallet session for invoice ${invoice.id}.`
+    });
+    scheduleSubmissionProgress();
+
+    const result = await sendPayInvoiceBundle({
+      invoiceId: invoice.id,
+      paymentToken: invoice.billingToken as `0x${string}`
+    });
+
+    clearProgressTimers();
+    interopStep.value = 'waiting';
+    interopMessage.value = 'Source transaction confirmed. Waiting for the invoice payment to finalize on chain C.';
+    interopSourceTxHash.value = result.transactionHash;
+    interopBundleHash.value = result.bundleHash ?? '';
+
+    updateTransaction(txId, {
+      hash: result.transactionHash,
+      detail: result.bundleHash
+        ? `Bundle ${truncateHash(result.bundleHash)} submitted. Waiting for invoice ${invoice.id} to be marked paid.`
+        : `Source transaction confirmed. Waiting for invoice ${invoice.id} to be marked paid.`
+    });
+
+    const paidInvoice = await waitForInvoiceStatus(invoice.id, 'paid');
+
+    interopStep.value = 'success';
+    interopMessage.value = `Invoice ${paidInvoice.id} was paid on chain C.`;
+    interopInvoiceId.value = paidInvoice.id;
+
+    updateTransaction(txId, {
+      status: 'success',
+      hash: result.transactionHash,
+      detail: `Invoice ${paidInvoice.id} marked paid on chain C.`
+    });
+
+    void refreshBalances();
+    refreshInvoiceTable();
+  } catch (error) {
+    clearProgressTimers();
+    interopStep.value = 'failed';
+    interopError.value = formatTransactionError(error, `Failed to pay invoice ${invoice.id} on chain C.`);
+    errorMessage.value = interopError.value;
+
+    updateTransaction(txId, {
+      status: 'failed',
+      hash: interopSourceTxHash.value || 'Submission failed',
+      detail: interopError.value
+    });
+  } finally {
+    processingInvoiceId.value = '';
   }
 };
 

@@ -5,8 +5,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { execCmd } from './exec-cmd';
 
 const DEFAULT_BUNDLER_IMAGE = 'quay.io/matterlabs_enterprise/prividium-bundler:v1.164.2';
-const ENTRYPOINT_SIM_V7_ARTIFACT_PATH =
-  '/app/apps/bundler/node_modules/@pimlico/alto/esm/contracts/EntryPointSimulations.sol/EntryPointSimulations07.json';
+const ENTRYPOINT_SIM_V8_ARTIFACT_PATH =
+  '/app/apps/bundler/node_modules/@pimlico/alto/esm/contracts/EntryPointSimulations.sol/EntryPointSimulations08.json';
 const PIMLICO_SIM_ARTIFACT_PATH =
   '/app/apps/bundler/node_modules/@pimlico/alto/esm/contracts/PimlicoSimulations.sol/PimlicoSimulations.json';
 
@@ -30,16 +30,16 @@ export type BundlerSimulationChainConfig = {
   rpcUrl: string;
   authToken?: string;
   configured?: {
-    entryPointSimulationV7?: Address;
+    entryPointSimulationV8?: Address;
     pimlicoSimulation?: Address;
   };
 };
 
 export type BundlerSimulationContracts = {
-  entryPointSimulationV7: Address;
+  entryPointSimulationV8: Address;
   pimlicoSimulation: Address;
   deployed: {
-    entryPointSimulationV7: boolean;
+    entryPointSimulationV8: boolean;
     pimlicoSimulation: boolean;
   };
 };
@@ -101,12 +101,12 @@ export async function deployBundlerSimulationContracts(
   console.log(
     `  Chain ${args.chain.label}: loading bundler simulation artifacts from ${bundlerImage}...`
   );
-  const [entryPointSimulationV7Bytecode, pimlicoSimulationBytecode] = await Promise.all([
+  const [entryPointSimulationV8Bytecode, pimlicoSimulationBytecode] = await Promise.all([
     loadArtifactBytecodeFromImage(
       args.rootPath,
       bundlerImage,
-      ENTRYPOINT_SIM_V7_ARTIFACT_PATH,
-      'EntryPointSimulations07'
+      ENTRYPOINT_SIM_V8_ARTIFACT_PATH,
+      'EntryPointSimulations08'
     ),
     loadArtifactBytecodeFromImage(
       args.rootPath,
@@ -170,11 +170,11 @@ export async function deployBundlerSimulationContracts(
     return { address: receipt.contractAddress as Address, deployed: true };
   }
 
-  const [entryPointSimulationV7, pimlicoSimulation] = await Promise.all([
+  const [entryPointSimulationV8, pimlicoSimulation] = await Promise.all([
     ensureContract(
-      'EntryPointSimulations07',
-      args.chain.configured?.entryPointSimulationV7,
-      entryPointSimulationV7Bytecode
+      'EntryPointSimulations08',
+      args.chain.configured?.entryPointSimulationV8,
+      entryPointSimulationV8Bytecode
     ),
     ensureContract(
       'PimlicoSimulations',
@@ -184,12 +184,11 @@ export async function deployBundlerSimulationContracts(
   ]);
 
   return {
-    entryPointSimulationV7: entryPointSimulationV7.address,
+    entryPointSimulationV8: entryPointSimulationV8.address,
     pimlicoSimulation: pimlicoSimulation.address,
     deployed: {
-      entryPointSimulationV7: entryPointSimulationV7.deployed,
+      entryPointSimulationV8: entryPointSimulationV8.deployed,
       pimlicoSimulation: pimlicoSimulation.deployed
     }
   };
 }
-

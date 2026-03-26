@@ -18,6 +18,44 @@ const UPGRADEABLE_BEACON_BYTECODE = UpgradeableBeaconArtifact.bytecode?.object a
 const ACCOUNT_IMPL_ABI = ModularSmartAccountArtifact.abi as Abi;
 const ACCOUNT_IMPL_BYTECODE = ModularSmartAccountArtifact.bytecode?.object as Hex;
 const LEGACY_ACCOUNT_ENTRYPOINT_HEX = '4337084d9e255ff0702461cf8895ce9e3b5ff108';
+const ACCOUNT_ENTRYPOINT_HEX_LENGTH = 40;
+const HEX_WORD_LENGTH = 64;
+const MODULUS_256 = 1n << 256n;
+
+function normalizeEntryPointHex(entryPoint: Address): string {
+  const normalized = entryPoint.toLowerCase().slice(2);
+  if (normalized.length !== ACCOUNT_ENTRYPOINT_HEX_LENGTH) {
+    throw new Error(`Invalid EntryPoint address: ${entryPoint}`);
+  }
+  return normalized;
+}
+
+function toNegatedWordHex(entryPointHex: string): string {
+  const entryPointBigInt = BigInt(`0x${entryPointHex}`);
+  const negated = (MODULUS_256 - entryPointBigInt) % MODULUS_256;
+  return negated.toString(16).padStart(HEX_WORD_LENGTH, '0');
+}
+
+const LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX = toNegatedWordHex(LEGACY_ACCOUNT_ENTRYPOINT_HEX);
+
+function replaceAllWithCount(input: string, searchValue: string, replaceValue: string) {
+  if (!searchValue.length) {
+    return { value: input, count: 0 };
+  }
+  const chunks = input.split(searchValue);
+  return {
+    value: chunks.join(replaceValue),
+    count: Math.max(0, chunks.length - 1)
+  };
+}
+
+function containsLegacyEntrypointMarkers(bytecode: Hex): boolean {
+  const normalized = bytecode.toLowerCase();
+  return (
+    normalized.includes(LEGACY_ACCOUNT_ENTRYPOINT_HEX) ||
+    normalized.includes(LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX)
+  );
+}
 
 const MSA_FACTORY_ABI = MSAFactoryArtifact.abi as Abi;
 const MSA_FACTORY_BYTECODE = MSAFactoryArtifact.bytecode?.object as Hex;
@@ -125,14 +163,40 @@ function buildAccountImplementationBytecode(entryPoint?: Address): Hex {
     return ACCOUNT_IMPL_BYTECODE;
   }
 
-  const targetEntryPointHex = entryPoint.toLowerCase().slice(2);
+  const targetEntryPointHex = normalizeEntryPointHex(entryPoint);
+  const targetNegatedWordHex = toNegatedWordHex(targetEntryPointHex);
   const bytecodeLower = ACCOUNT_IMPL_BYTECODE.toLowerCase();
-  const patchedBytecode = bytecodeLower.split(LEGACY_ACCOUNT_ENTRYPOINT_HEX).join(targetEntryPointHex);
+  let patchedBytecode = bytecodeLower;
 
-  if (patchedBytecode === bytecodeLower && targetEntryPointHex !== LEGACY_ACCOUNT_ENTRYPOINT_HEX) {
-    console.warn(
-      `⚠️ Could not find legacy EntryPoint ${LEGACY_ACCOUNT_ENTRYPOINT_HEX} in account implementation bytecode; deploying artifact bytecode as-is.`
+  if (targetEntryPointHex !== LEGACY_ACCOUNT_ENTRYPOINT_HEX) {
+    const entryPointPatch = replaceAllWithCount(
+      patchedBytecode,
+      LEGACY_ACCOUNT_ENTRYPOINT_HEX,
+      targetEntryPointHex
     );
+    patchedBytecode = entryPointPatch.value;
+
+    const negatedPatch = replaceAllWithCount(
+      patchedBytecode,
+      LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX,
+      targetNegatedWordHex
+    );
+    patchedBytecode = negatedPatch.value;
+
+    if (entryPointPatch.count + negatedPatch.count === 0) {
+      console.warn(
+        `⚠️ Could not find legacy EntryPoint markers for ${LEGACY_ACCOUNT_ENTRYPOINT_HEX} in account implementation bytecode; deploying artifact bytecode as-is.`
+      );
+    }
+
+    if (
+      patchedBytecode.includes(LEGACY_ACCOUNT_ENTRYPOINT_HEX) ||
+      patchedBytecode.includes(LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX)
+    ) {
+      throw new Error(
+        `Failed to patch all legacy EntryPoint markers in account implementation bytecode (${LEGACY_ACCOUNT_ENTRYPOINT_HEX}).`
+      );
+    }
   }
 
   return patchedBytecode as Hex;
@@ -172,28 +236,39 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     }
   }
 
-  async function ensureAccountImplementation(): Promise<{ address: Address; deployed: boolean }> {
+  async function ensureAccountImplementation(
+    expectedEntryPointAddress: Address
+  ): Promise<{ address: Address; deployed: boolean }> {
     const configured = config.configured?.accountImplementation;
-    const expectedEntryPoint = config.configured?.entryPoint?.toLowerCase();
+    const expectedEntryPoint = expectedEntryPointAddress.toLowerCase();
+    const expectsNonLegacyEntrypoint =
+      expectedEntryPoint.slice(2) !== LEGACY_ACCOUNT_ENTRYPOINT_HEX;
     if (configured) {
       if (await hasCode(configured)) {
-        if (expectedEntryPoint) {
-          const implementationEntryPoint = await readAccountEntryPoint(configured);
-          if (!implementationEntryPoint) {
-            throw new Error(
-              `Configured account implementation ${configured} does not expose entryPoint()`
-            );
-          }
+        const implementationEntryPoint = await readAccountEntryPoint(configured);
+        if (!implementationEntryPoint) {
+          throw new Error(
+            `Configured account implementation ${configured} does not expose entryPoint()`
+          );
+        }
 
-          if (implementationEntryPoint.toLowerCase() !== expectedEntryPoint) {
+        if (implementationEntryPoint.toLowerCase() !== expectedEntryPoint) {
+          console.warn(
+            `⚠️ Configured account implementation ${configured} targets EntryPoint ${implementationEntryPoint}, expected ${expectedEntryPointAddress}. Deploying a new implementation.`
+          );
+        } else {
+          const implementationBytecode = await publicClient.getBytecode({ address: configured });
+          if (
+            expectsNonLegacyEntrypoint &&
+            implementationBytecode &&
+            containsLegacyEntrypointMarkers(implementationBytecode)
+          ) {
             console.warn(
-              `⚠️ Configured account implementation ${configured} targets EntryPoint ${implementationEntryPoint}, expected ${config.configured?.entryPoint}. Deploying a new implementation.`
+              `⚠️ Configured account implementation ${configured} still contains legacy EntryPoint guard markers. Deploying a new implementation.`
             );
           } else {
             return { address: configured, deployed: false };
           }
-        } else {
-          return { address: configured, deployed: false };
         }
       }
       if (!(await hasCode(configured))) {
@@ -202,9 +277,8 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     }
 
     console.log('🚀 Deploying ModularSmartAccount implementation...');
-    const accountImplementationBytecode = buildAccountImplementationBytecode(
-      config.configured?.entryPoint
-    );
+    const accountImplementationBytecode =
+      buildAccountImplementationBytecode(expectedEntryPointAddress);
     const hash = await walletClient.deployContract({
       abi: ACCOUNT_IMPL_ABI,
       bytecode: accountImplementationBytecode,
@@ -219,13 +293,11 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     }
 
     const deployedAddress = receipt.contractAddress as Address;
-    if (expectedEntryPoint) {
-      const deployedEntryPoint = await readAccountEntryPoint(deployedAddress);
-      if (!deployedEntryPoint || deployedEntryPoint.toLowerCase() !== expectedEntryPoint) {
-        throw new Error(
-          `Deployed account implementation ${deployedAddress} has unexpected EntryPoint ${deployedEntryPoint ?? 'unknown'}, expected ${config.configured?.entryPoint}.`
-        );
-      }
+    const deployedEntryPoint = await readAccountEntryPoint(deployedAddress);
+    if (!deployedEntryPoint || deployedEntryPoint.toLowerCase() !== expectedEntryPoint) {
+      throw new Error(
+        `Deployed account implementation ${deployedAddress} has unexpected EntryPoint ${deployedEntryPoint ?? 'unknown'}, expected ${expectedEntryPointAddress}.`
+      );
     }
     console.log(`✅ Account implementation deployed at: ${deployedAddress}`);
     return { address: deployedAddress, deployed: true };
@@ -262,14 +334,16 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     return bytecodeHash;
   }
 
-  async function ensureBeacon(): Promise<{
+  async function ensureBeacon(expectedEntryPointAddress: Address): Promise<{
     address: Address;
     implementation: Address;
     deployed: boolean;
     implementationDeployed: boolean;
   }> {
     const configured = config.configured?.beacon;
-    const expectedEntryPoint = config.configured?.entryPoint?.toLowerCase();
+    const expectedEntryPoint = expectedEntryPointAddress.toLowerCase();
+    const expectsNonLegacyEntrypoint =
+      expectedEntryPoint.slice(2) !== LEGACY_ACCOUNT_ENTRYPOINT_HEX;
     if (configured) {
       if (!(await hasCode(configured))) {
         throw new Error(`No code at configured beacon address: ${configured}`);
@@ -282,16 +356,25 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
       if (!(await hasCode(implementation))) {
         throw new Error(`Beacon implementation has no code at ${implementation}`);
       }
-      if (expectedEntryPoint) {
-        const implementationEntryPoint = await readAccountEntryPoint(implementation);
-        if (!implementationEntryPoint) {
-          throw new Error(
-            `Beacon implementation ${implementation} does not expose entryPoint()`
-          );
-        }
-        if (implementationEntryPoint.toLowerCase() !== expectedEntryPoint) {
+      const implementationEntryPoint = await readAccountEntryPoint(implementation);
+      if (!implementationEntryPoint) {
+        throw new Error(
+          `Beacon implementation ${implementation} does not expose entryPoint()`
+        );
+      }
+      if (implementationEntryPoint.toLowerCase() !== expectedEntryPoint) {
+        console.warn(
+          `⚠️ Configured beacon ${configured} points to implementation ${implementation} with EntryPoint ${implementationEntryPoint}, expected ${expectedEntryPointAddress}. Deploying a new beacon + implementation.`
+        );
+      } else {
+        const implementationBytecode = await publicClient.getBytecode({ address: implementation });
+        if (
+          expectsNonLegacyEntrypoint &&
+          implementationBytecode &&
+          containsLegacyEntrypointMarkers(implementationBytecode)
+        ) {
           console.warn(
-            `⚠️ Configured beacon ${configured} points to implementation ${implementation} with EntryPoint ${implementationEntryPoint}, expected ${config.configured?.entryPoint}. Deploying a new beacon + implementation.`
+            `⚠️ Configured beacon implementation ${implementation} still contains legacy EntryPoint guard markers. Deploying a new beacon + implementation.`
           );
         } else {
           return {
@@ -301,18 +384,11 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
             implementationDeployed: false
           };
         }
-      } else {
-        return {
-          address: configured,
-          implementation,
-          deployed: false,
-          implementationDeployed: false
-        };
       }
     }
 
     const { address: implementation, deployed: implementationDeployed } =
-      await ensureAccountImplementation();
+      await ensureAccountImplementation(expectedEntryPointAddress);
 
     console.log('🚀 Deploying UpgradeableBeacon...');
     const hash = await walletClient.deployContract({
@@ -534,7 +610,7 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     eoaValidator.address
   );
   const entryPoint = await ensureEntryPoint();
-  const beacon = await ensureBeacon();
+  const beacon = await ensureBeacon(entryPoint.address);
   const factory = await ensureFactory(beacon.address);
   const ssoBytecodeHash = await deploySsoAccountAndComputeBytecodeHash(factory.address);
 

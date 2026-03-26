@@ -7,6 +7,7 @@ import {
   defineChain,
   getAddress,
   http,
+  parseAbiItem,
   type Address,
   zeroAddress
 } from 'viem';
@@ -21,8 +22,19 @@ import { ServiceResponse } from '@/utils/response/serviceResponse';
 const ADMIN_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
 const ADMIN_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address;
 const INVOICE_CHUNK_SIZE = 25;
+const INVOICE_VIEWS = ['all', 'created', 'received'] as const;
+const invoiceCreatedEvent = parseAbiItem(
+  'event InvoiceCreated(uint256 indexed id, address indexed creatorRefundAddress, address indexed recipientRefundAddress, uint256 creatorChainId, uint256 recipientChainId, address billingToken, uint256 amount)'
+);
 
 const invoiceAbi = [
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getInvoiceCount',
+    inputs: [],
+    outputs: [{ name: 'count', type: 'uint256' }]
+  },
   {
     type: 'function',
     stateMutability: 'view',
@@ -132,6 +144,8 @@ type ContractsConfig = {
 };
 
 type InvoiceStatus = 'Created' | 'Paid' | 'Cancelled';
+type InvoiceSourceTag = 'created' | 'pending';
+type InvoiceView = (typeof INVOICE_VIEWS)[number];
 
 type RawInvoice = {
   id: bigint;
@@ -167,7 +181,7 @@ type NormalizedInvoice = {
   createdAt: string;
   paidAt: string | null;
   text: string;
-  sourceTags: Array<'created' | 'pending'>;
+  sourceTags: InvoiceSourceTag[];
 };
 
 type ChainCContext = {
@@ -186,12 +200,16 @@ type InvoiceResponseObject = {
     authBaseUrl: string;
     invoicePayment: Address;
   };
+  accountAddress: Address | null;
   adminAddress: Address;
   counts: {
     created: number;
     pending: number;
     total: number;
   };
+  view?: InvoiceView;
+  availableViews?: InvoiceView[];
+  countsByView?: Record<InvoiceView, number>;
   createdInvoiceIds: string[];
   pendingInvoiceIds: string[];
   invoices: NormalizedInvoice[];
@@ -288,7 +306,7 @@ function chunkArray<T>(values: readonly T[], chunkSize: number): T[][] {
   return chunks;
 }
 
-function normalizeInvoice(invoice: RawInvoice, sourceTags: Array<'created' | 'pending'>): NormalizedInvoice {
+function normalizeInvoice(invoice: RawInvoice, sourceTags: InvoiceSourceTag[]): NormalizedInvoice {
   const statuses: InvoiceStatus[] = ['Created', 'Paid', 'Cancelled'];
   const status = statuses[Number(invoice.status)] ?? 'Unknown';
 
@@ -468,33 +486,134 @@ async function readInvoiceDetails(
   return results;
 }
 
-async function fetchInvoices() {
+async function readAllInvoiceIds(
+  client: ReturnType<typeof createChainCClient>,
+  invoicePayment: Address
+): Promise<bigint[]> {
+  try {
+    const invoiceCount = (await client.readContract({
+      address: invoicePayment,
+      abi: invoiceAbi,
+      functionName: 'getInvoiceCount'
+    })) as bigint;
+
+    return buildSequentialInvoiceIds(invoiceCount);
+  } catch (error) {
+    console.warn(
+      'getInvoiceCount unavailable on InvoicePayment, falling back to InvoiceCreated logs',
+      error
+    );
+  }
+
+  const logs = await client.getLogs({
+    address: invoicePayment,
+    event: invoiceCreatedEvent,
+    fromBlock: 0n,
+    toBlock: 'latest'
+  });
+
+  return [...new Set(logs.map((log) => log.args.id).filter((id): id is bigint => typeof id === 'bigint'))].sort(
+    (left, right) => (left < right ? -1 : left > right ? 1 : 0)
+  );
+}
+
+function resolveRequestedAccountAddress(
+  req: Request,
+  options: { defaultToAdmin: boolean }
+): Address | null {
+  const queryValue = typeof req.query.accountAddress === 'string' ? req.query.accountAddress : undefined;
+  const bodyValue =
+    req.body && typeof req.body === 'object' && typeof req.body.accountAddress === 'string'
+      ? req.body.accountAddress
+      : undefined;
+  const candidate = bodyValue?.trim() || queryValue?.trim();
+
+  if (candidate) {
+    return getAddress(candidate);
+  }
+
+  return options.defaultToAdmin ? ADMIN_ADDRESS : null;
+}
+
+function resolveRequestedView(req: Request): InvoiceView | undefined {
+  const queryValue = typeof req.query.view === 'string' ? req.query.view : undefined;
+  const bodyValue =
+    req.body && typeof req.body === 'object' && typeof req.body.view === 'string'
+      ? req.body.view
+      : undefined;
+  const candidate = bodyValue?.trim() || queryValue?.trim();
+
+  if (!candidate) {
+    return undefined;
+  }
+
+  if ((INVOICE_VIEWS as readonly string[]).includes(candidate)) {
+    return candidate as InvoiceView;
+  }
+
+  throw new Error(`Unsupported invoice view "${candidate}"`);
+}
+
+function buildSequentialInvoiceIds(count: bigint): bigint[] {
+  const invoiceIds: bigint[] = [];
+  for (let invoiceId = 1n; invoiceId <= count; invoiceId += 1n) {
+    invoiceIds.push(invoiceId);
+  }
+  return invoiceIds;
+}
+
+function filterInvoicesByView(invoices: NormalizedInvoice[], view: InvoiceView): NormalizedInvoice[] {
+  if (view === 'all') {
+    return invoices;
+  }
+
+  const sourceTag: InvoiceSourceTag = view === 'created' ? 'created' : 'pending';
+  return invoices.filter((invoice) => invoice.sourceTags.includes(sourceTag));
+}
+
+async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView) {
   const chainC = loadChainCContext();
 
   const token = await getAdminAuthToken(chainC);
   const client = createChainCClient(chainC, token);
 
-  const [createdCount, pendingCount] = await Promise.all([
-    client.readContract({
-      address: chainC.invoicePayment,
-      abi: invoiceAbi,
-      functionName: 'getUserCreatedInvoiceCount',
-      args: [ADMIN_ADDRESS]
-    }) as Promise<bigint>,
-    client.readContract({
-      address: chainC.invoicePayment,
-      abi: invoiceAbi,
-      functionName: 'getUserPendingInvoiceCount',
-      args: [ADMIN_ADDRESS]
-    }) as Promise<bigint>
-  ]);
+  const [createdCount, pendingCount] = accountAddress
+    ? await Promise.all([
+        client.readContract({
+          address: chainC.invoicePayment,
+          abi: invoiceAbi,
+          functionName: 'getUserCreatedInvoiceCount',
+          args: [accountAddress]
+        }) as Promise<bigint>,
+        client.readContract({
+          address: chainC.invoicePayment,
+          abi: invoiceAbi,
+          functionName: 'getUserPendingInvoiceCount',
+          args: [accountAddress]
+        }) as Promise<bigint>
+      ])
+    : [0n, 0n];
 
-  const [createdInvoiceIds, pendingInvoiceIds] = await Promise.all([
-    readInvoiceIds(client, 'getUserCreatedInvoices', ADMIN_ADDRESS, createdCount, chainC.invoicePayment),
-    readInvoiceIds(client, 'getUserPendingInvoices', ADMIN_ADDRESS, pendingCount, chainC.invoicePayment)
-  ]);
+  const [createdInvoiceIds, pendingInvoiceIds] = accountAddress
+    ? await Promise.all([
+        readInvoiceIds(
+          client,
+          'getUserCreatedInvoices',
+          accountAddress,
+          createdCount,
+          chainC.invoicePayment
+        ),
+        readInvoiceIds(
+          client,
+          'getUserPendingInvoices',
+          accountAddress,
+          pendingCount,
+          chainC.invoicePayment
+        )
+      ])
+    : [[], []];
 
-  const sourceMap = new Map<string, Array<'created' | 'pending'>>();
+  const sourceMap = new Map<string, InvoiceSourceTag[]>();
   for (const invoiceId of createdInvoiceIds) {
     const key = invoiceId.toString();
     sourceMap.set(key, [...(sourceMap.get(key) ?? []), 'created']);
@@ -502,6 +621,42 @@ async function fetchInvoices() {
   for (const invoiceId of pendingInvoiceIds) {
     const key = invoiceId.toString();
     sourceMap.set(key, [...(sourceMap.get(key) ?? []), 'pending']);
+  }
+
+  if (view) {
+    const orderedInvoiceIds = await readAllInvoiceIds(client, chainC.invoicePayment);
+    const invoices = await readInvoiceDetails(client, orderedInvoiceIds, chainC.invoicePayment);
+    const normalizedInvoices = invoices.map((invoice) =>
+      normalizeInvoice(invoice, sourceMap.get(invoice.id.toString()) ?? [])
+    );
+    const countsByView = {
+      all: normalizedInvoices.length,
+      created: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('created')).length,
+      received: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('pending')).length
+    } satisfies Record<InvoiceView, number>;
+
+    return {
+      chain: {
+        chainId: chainC.chainId,
+        rpcUrl: chainC.rpcUrl,
+        apiUrl: chainC.apiUrl,
+        authBaseUrl: chainC.authBaseUrl,
+        invoicePayment: chainC.invoicePayment
+      },
+      accountAddress,
+      adminAddress: ADMIN_ADDRESS,
+      counts: {
+        created: Number(createdCount),
+        pending: Number(pendingCount),
+        total: countsByView[view]
+      },
+      view,
+      availableViews: [...INVOICE_VIEWS],
+      countsByView,
+      createdInvoiceIds: createdInvoiceIds.map((invoiceId) => invoiceId.toString()),
+      pendingInvoiceIds: pendingInvoiceIds.map((invoiceId) => invoiceId.toString()),
+      invoices: filterInvoicesByView(normalizedInvoices, view)
+    } satisfies InvoiceResponseObject;
   }
 
   const orderedUniqueInvoiceIds = [...sourceMap.keys()].map((value) => BigInt(value));
@@ -525,6 +680,7 @@ async function fetchInvoices() {
       authBaseUrl: chainC.authBaseUrl,
       invoicePayment: chainC.invoicePayment
     },
+    accountAddress,
     adminAddress: ADMIN_ADDRESS,
     counts: {
       created: Number(createdCount),
@@ -540,7 +696,11 @@ async function fetchInvoices() {
 async function handleInvoices(_req: Request, res: Response) {
   let serviceResponse: ServiceResponse<unknown>;
   try {
-    const responseObject = await fetchInvoices();
+    const requestedView = resolveRequestedView(_req);
+    const accountAddress = resolveRequestedAccountAddress(_req, {
+      defaultToAdmin: requestedView === undefined
+    });
+    const responseObject = await fetchInvoices(accountAddress, requestedView);
     serviceResponse = ServiceResponse.success('Fetched invoices', responseObject);
   } catch (error) {
     serviceResponse = ServiceResponse.failure(

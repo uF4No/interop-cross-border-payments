@@ -60,6 +60,16 @@ async function main() {
           chainBSso?.ssoBytecodeHash
         ) as `0x${string}`
       }
+    ],
+    bundlers: [
+      {
+        serviceName: 'bundler-l2a',
+        entryPoint: requiredValue('chains.a.sso.entryPoint', chainASso?.entryPoint) as `0x${string}`
+      },
+      {
+        serviceName: 'bundler-l2b',
+        entryPoint: requiredValue('chains.b.sso.entryPoint', chainBSso?.entryPoint) as `0x${string}`
+      }
     ]
   });
 

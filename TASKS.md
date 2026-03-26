@@ -27,6 +27,8 @@
 - [x] Configure env.example and .env to work with 3 different chains, which are the ones mentioned in /prividium-3chain-local/README.md
 - [x] The /deploy-account endpoint should also mint some amount to the USDC, SGD and TBILL tokens (deployed in the setup script) to the newly created account
 - [x] Create a new endpoint /invoices, that uses a hardcoded account (ADMIN_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 ADMIN_ADDRESS=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) to call the InvoicePayment.sol contract (deployed in setup script, address in /config/contracts.json) to query the available invoices and send the data back. This will be used from the web-app
+- [ ] Create a new endpoint to change the exchange rate of the tokens in chain C InvoicePayment.sol contract. We should call setExchangeRate() with the admin account, which is the one that deployed the contracts in the setup script.
+- [ ] make /invoices endpoint able to query all invoices, not filtering by a specific account.
 
 ## Web app
 
@@ -46,4 +48,5 @@
 - [x] when switching between chain A and B in login view, we should update the accent color, company name etc from the env file using the correspondent values from chain A or B. THIS IS UNCOMPLETED, we have VITE_COMPANY_A_* and VITE_COMPANY_B_* variables which should be used.
 - [x] BUG: when there's an error in the app (like querying the invoices or a network issue) the logout button disapears from the navbar. Make sure errors do not affect visibility of this component/button.
 - [x] In the MainView, we should display the current user token balances at the top, in a table view.
-- [ ] 
+- [ ] Make web-app able to show all invoices and current user invoices (filter by current wallet).
+- [ ] Change steper to track progress of interop transactions horizontal

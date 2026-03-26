@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type { Address, Hex } from 'viem';
 
 type PermissionApiServiceName = 'permissions-api-l2a' | 'permissions-api-l2b';
+type BundlerServiceName = 'bundler-l2a' | 'bundler-l2b';
 
 type PermissionApiComposeServiceConfig = {
   serviceName: PermissionApiServiceName;
@@ -10,9 +11,15 @@ type PermissionApiComposeServiceConfig = {
   bundlerRpcUrl?: string;
 };
 
+type BundlerComposeServiceConfig = {
+  serviceName: BundlerServiceName;
+  entryPoint: Address;
+};
+
 type UpdatePermissionApisComposeArgs = {
   composePath: string;
   services: PermissionApiComposeServiceConfig[];
+  bundlers?: BundlerComposeServiceConfig[];
 };
 
 type ComposeUpdateServiceResult = {
@@ -131,6 +138,41 @@ function normalizeLineEndings(content: string): string {
   return content.replace(/\r\n/g, '\n');
 }
 
+function renderCommandValueLine(line: string, value: string): string {
+  const indentMatch = line.match(/^(\s*)/);
+  const indent = indentMatch?.[1] ?? '        ';
+  const hasComma = /,\s*$/.test(line);
+  return `${indent}"${value}"${hasComma ? ',' : ''}`;
+}
+
+function setBundlerEntrypoint(
+  lines: string[],
+  serviceName: BundlerServiceName,
+  entryPoint: Address
+): void {
+  const normalizedEntryPoint = entryPoint.toLowerCase();
+  const { start: serviceStart, end: serviceEnd } = findServiceRange(lines, serviceName);
+  const { start: envStart, end: envEnd } = findEnvironmentRange(lines, serviceStart, serviceEnd);
+
+  const envLines = lines.slice(envStart, envEnd);
+  const envUpdate = upsertEnvLine(
+    envLines,
+    'BUNDLER_ENTRYPOINTS',
+    toYamlString(normalizedEntryPoint, true),
+    envLines.length
+  );
+  lines.splice(envStart, envEnd - envStart, ...envUpdate.nextEnvLines);
+
+  for (let i = serviceStart + 1; i < serviceEnd - 1; i += 1) {
+    if (lines[i]?.includes('"--entrypoints"')) {
+      lines[i + 1] = renderCommandValueLine(lines[i + 1] ?? '        "",', normalizedEntryPoint);
+      return;
+    }
+  }
+
+  throw new Error(`Could not find --entrypoints command flag for ${serviceName}`);
+}
+
 function defaultBundlerRpcUrlForService(serviceName: PermissionApiServiceName): string {
   return serviceName === 'permissions-api-l2a'
     ? 'http://bundler-l2a:4337'
@@ -199,6 +241,10 @@ export function updatePermissionApisCompose(
     });
   }
 
+  for (const bundlerConfig of args.bundlers ?? []) {
+    setBundlerEntrypoint(lines, bundlerConfig.serviceName, bundlerConfig.entryPoint);
+  }
+
   const nextContent = `${lines.join('\n').replace(/\n*$/, '\n')}`;
   if (nextContent !== currentContent) {
     fs.writeFileSync(args.composePath, nextContent, 'utf8');
@@ -208,6 +254,6 @@ export function updatePermissionApisCompose(
     composePath: args.composePath,
     services: servicesSummary,
     restartCommand:
-      'docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate permissions-api-l2a permissions-api-l2b'
+      'docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate bundler-l2a bundler-l2b permissions-api-l2a permissions-api-l2b'
   };
 }

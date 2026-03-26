@@ -36,15 +36,18 @@ interopTxRouter.post('/', async (req: Request, res: Response) => {
   } else {
     try {
       const receipt = await client.zks.getReceiptWithL2ToL1(args.txHash);
-      const metadata = await extractTxMetadata(receipt);
-      // check if tx has correct logs
-      if (metadata.action !== 'Deposit' && metadata.action !== 'Withdrawal') {
+      if (!receipt?.l2ToL1Logs?.length) {
         serviceResponse = ServiceResponse.failure('Invalid transaction', null);
-      } else {
-        console.log('ADDING PENDING TX..');
-        addPendingTx(args.txHash, metadata, args.accountAddress);
-        serviceResponse = ServiceResponse.success('Transaction added.', null);
+        res.status(serviceResponse.statusCode).send(serviceResponse);
+        return;
       }
+
+      const metadata = await extractTxMetadata(receipt);
+      const normalizedMetadata =
+        metadata.action === 'Unknown' ? { action: 'Interop', amount: metadata.amount } : metadata;
+      console.log('ADDING PENDING TX..');
+      addPendingTx(args.txHash, normalizedMetadata, args.accountAddress);
+      serviceResponse = ServiceResponse.success('Transaction added.', null);
     } catch (error) {
       serviceResponse = ServiceResponse.failure('Error fetching transaction', { error });
     }

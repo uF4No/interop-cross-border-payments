@@ -5,30 +5,34 @@ import {
   type PublicClient,
   concat,
   concatHex,
-  decodeEventLog,
   encodeAbiParameters,
   encodeFunctionData,
   getAddress,
   isAddress,
-  keccak256,
   pad,
   parseAbi,
-  parseAbiParameters,
-  toBytes,
   toHex
 } from 'viem';
-import { requestPasskeyAuthentication } from 'zksync-sso-stable/client/passkey';
-import { base64UrlToUint8Array, unwrapEC2Signature } from 'zksync-sso-stable/utils';
 
 import { usePrividium } from './usePrividium';
 import { useRpcClient } from './useRpcClient';
 import { useSsoAccount } from './useSsoAccount';
 import type { CreateInvoiceSubmitPayload } from '@/utils/invoiceForm';
 import {
+  assertPasskeyMatchesAccount,
   clearSavedAccountAddress,
   loadExistingPasskey,
-  readAccountEntryPoint
+  readAccountEntryPoint,
+  savePasskeyCredentials
 } from '@/utils/sso/passkeys';
+import {
+  assertPasskeyUserOpSignatureValid,
+  signUserOpWithPasskey
+} from '@/utils/sso/signUserOpWithPasskey';
+import {
+  submitUserOpWithFallback,
+  type UserOpSubmissionResult
+} from '@/utils/sso/submitUserOpWithFallback';
 import type { PasskeyCredential } from '@/utils/sso/types';
 
 type WalletAuthorizer = (params: {
@@ -62,6 +66,7 @@ type SourceInteropConfig = {
 type DestinationInteropConfig = {
   chainId?: number;
   invoicePayment?: Address;
+  relayAddress?: Address;
   tokenAddresses: Record<BillingTokenSymbol, Address | undefined>;
 };
 
@@ -74,7 +79,45 @@ type SendCreateInvoiceResult = {
   destinationChainId: number;
 };
 
+type SendPayInvoicePayload = {
+  invoiceId: string;
+  paymentToken: Address;
+};
+
+type SendPayInvoiceResult = {
+  transactionHash: `0x${string}`;
+  bundleHash?: `0x${string}`;
+  paymentToken: Address;
+  sourceInteropCenter: Address;
+  destinationInvoicePayment: Address;
+  destinationChainId: number;
+};
+
+type ResolvedInteropSession = {
+  rpcClient: PublicClient;
+  sourceChainId: number;
+  sourceChainKey: SourceChainKey;
+  interopCenter: Address;
+  entryPoint: Address;
+  webauthnValidator: Address;
+  destinationChainId: number;
+  destinationInvoicePayment: Address;
+  destinationRelayAddress: Address;
+  savedAccount: Address;
+  savedPasskey: PasskeyCredential;
+};
+
+type DestinationCallStarter = {
+  to: Address;
+  data: Hex;
+  callAttributes: Hex[];
+};
+
 const env = import.meta.env as Record<string, string | undefined>;
+const SHADOW_ACCOUNT_ATTRIBUTE_SELECTOR = '0x3569f7f7' as Hex;
+const UNBUNDLER_ATTRIBUTE_SELECTOR = '0xb9c86698' as Hex;
+const LOCAL_INTEROP_RELAY_ADDRESS = '0x36615Cf349d7F6344891B1e7CA7C72883F5dc049' as Address;
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 const interopCenterAbi = parseAbi([
   'function sendBundle(bytes _destinationChainId, (bytes to, bytes data, bytes[] callAttributes)[] _callStarters, bytes[] _bundleAttributes) payable returns (bytes32)',
@@ -82,11 +125,17 @@ const interopCenterAbi = parseAbi([
 ]);
 
 const invoicePaymentAbi = parseAbi([
-  'function createInvoice(address recipient, uint256 recipientChainId, address billingToken, uint256 amount, uint256 creatorChainId, address creatorRefundAddress, address recipientRefundAddress, string text) returns (uint256 invoiceId)'
+  'function createInvoice(address recipient, uint256 recipientChainId, address billingToken, uint256 amount, uint256 creatorChainId, address creatorRefundAddress, address recipientRefundAddress, string text) returns (uint256 invoiceId)',
+  'function payInvoice(uint256 invoiceId, address paymentToken) payable'
+]);
+
+const erc20Abi = parseAbi([
+  'function approve(address spender, uint256 value) returns (bool)'
 ]);
 
 const entryPointAbi = parseAbi([
-  'function getNonce(address sender, uint192 key) view returns (uint256 nonce)'
+  'function getNonce(address sender, uint192 key) view returns (uint256 nonce)',
+  'function getUserOpHash((address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData,bytes signature) userOp) view returns (bytes32)'
 ]);
 
 function readAddress(...keys: string[]): Address | undefined {
@@ -135,11 +184,42 @@ function formatEvmV1AddressOnly(address: Address): Hex {
   return concatHex(['0x000100000014', address]);
 }
 
+function unbundlerAddressAttribute(unbundler: Address): Hex {
+  return concatHex([
+    UNBUNDLER_ATTRIBUTE_SELECTOR,
+    encodeAbiParameters([{ type: 'bytes' }], [formatEvmV1AddressOnly(unbundler)])
+  ]);
+}
+
+function shadowAccountAttribute(): Hex {
+  return SHADOW_ACCOUNT_ATTRIBUTE_SELECTOR;
+}
+
+function readInteropRelayAddress(): Address | undefined {
+  const configured = readAddress('VITE_CHAIN_C_INTEROP_RELAY_ADDRESS', 'VITE_INTEROP_RELAY_ADDRESS');
+  if (configured) {
+    return configured;
+  }
+
+  const endpoints = [
+    env.VITE_BACKEND_URL?.trim(),
+    env.VITE_CHAIN_A_RPC_URL?.trim(),
+    env.VITE_CHAIN_C_RPC_URL?.trim()
+  ].filter((value): value is string => Boolean(value));
+
+  const looksLocalStack = endpoints.some((value) =>
+    /(^https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(value)
+  );
+
+  return looksLocalStack ? LOCAL_INTEROP_RELAY_ADDRESS : undefined;
+}
+
 function buildGasOptions(): GasOptions {
   const callGasLimit = 500000n;
   const verificationGasLimit = 2000000n;
   const maxFeePerGas = 10000000000n;
-  const maxPriorityFeePerGas = 5000000000n;
+  // Chain A/B bundler expects legacy-style pricing on these local chains.
+  const maxPriorityFeePerGas = maxFeePerGas;
   const preVerificationGas = 200000n;
 
   const accountGasLimits = pad(toHex((verificationGasLimit << 128n) | callGasLimit), {
@@ -197,6 +277,7 @@ function getDestinationInteropConfig(): DestinationInteropConfig {
   return {
     chainId: readChainId('VITE_CHAIN_C_CHAIN_ID'),
     invoicePayment: readAddress('VITE_CHAIN_C_INVOICE_PAYMENT', 'VITE_INVOICE_PAYMENT_CONTRACT'),
+    relayAddress: readInteropRelayAddress(),
     tokenAddresses: {
       USDC: readAddress('VITE_TOKEN_USDC_ADDRESS_CHAIN_C'),
       SGD: readAddress('VITE_TOKEN_SGD_ADDRESS_CHAIN_C'),
@@ -217,7 +298,7 @@ async function sendTxWithPasskeyForChain(
   readClient: PublicClient,
   sourceConfig: Required<Pick<SourceInteropConfig, 'chainId' | 'entryPoint' | 'webauthnValidator'>>,
   enableWalletToken?: WalletAuthorizer
-) {
+): Promise<UserOpSubmissionResult> {
   const modeCode = pad('0x01', { dir: 'right', size: 32 });
 
   const executionData = encodeAbiParameters(
@@ -275,66 +356,43 @@ async function sendTxWithPasskeyForChain(
     signature: '0x' as Hex
   };
 
-  const packedUserOpTypehash =
-    '0x29a0bca4af4be3421398da00295e58e6d7de38cb492214754cb6a47507dd6f8e';
-  const domainTypeHash = '0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f';
-  const nameHash = keccak256(toBytes('ERC4337'));
-  const versionHash = keccak256(toBytes('1'));
+  const userOpHash = (await readClient.readContract({
+    address: sourceConfig.entryPoint,
+    abi: entryPointAbi,
+    functionName: 'getUserOpHash',
+    args: [packedUserOp],
+    account: accountAddress
+  })) as Hex;
 
-  const domainSeparator = keccak256(
-    encodeAbiParameters(parseAbiParameters('bytes32,bytes32,bytes32,uint256,address'), [
-      domainTypeHash,
-      nameHash,
-      versionHash,
-      BigInt(sourceConfig.chainId),
-      sourceConfig.entryPoint
-    ])
-  );
-
-  const structHash = keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32,address,uint256,bytes32,bytes32,bytes32,uint256,bytes32,bytes32'),
-      [
-        packedUserOpTypehash,
-        packedUserOp.sender,
-        packedUserOp.nonce,
-        keccak256(packedUserOp.initCode),
-        keccak256(packedUserOp.callData),
-        packedUserOp.accountGasLimits,
-        packedUserOp.preVerificationGas,
-        packedUserOp.gasFees,
-        keccak256(packedUserOp.paymasterAndData)
-      ]
-    )
-  );
-
-  const userOpHash = keccak256(concat(['0x1901', domainSeparator, structHash]));
-
-  const passkeySignature = await requestPasskeyAuthentication({
-    challenge: userOpHash,
-    credentialPublicKey: new Uint8Array(passkeyCredentials.credentialPublicKey)
+  const signed = await signUserOpWithPasskey({
+    hash: userOpHash,
+    credentialId: passkeyCredentials.credentialId,
+    validatorAddress: sourceConfig.webauthnValidator,
+    rpId: window.location.hostname,
+    origin: window.location.origin
   });
+  packedUserOp.signature = signed.signature;
 
-  const response = passkeySignature.passkeyAuthenticationResponse.response;
-  const authenticatorDataHex = toHex(base64UrlToUint8Array(response.authenticatorData));
-  const credentialIdHex = toHex(
-    base64UrlToUint8Array(passkeySignature.passkeyAuthenticationResponse.id)
-  );
-  const signatureData = unwrapEC2Signature(base64UrlToUint8Array(response.signature));
-  const r = pad(toHex(signatureData.r), { size: 32 });
-  const s = pad(toHex(signatureData.s), { size: 32 });
-
-  const passkeySignatureEncoded = encodeAbiParameters(
-    [{ type: 'bytes' }, { type: 'string' }, { type: 'bytes32[2]' }, { type: 'bytes' }],
-    [
-      authenticatorDataHex,
-      new TextDecoder().decode(base64UrlToUint8Array(response.clientDataJSON)),
-      [r, s],
-      credentialIdHex
-    ]
-  );
-
-  packedUserOp.signature = concat([sourceConfig.webauthnValidator, passkeySignatureEncoded]);
+  if (signed.credentialId !== signed.expectedCredentialId) {
+    const refreshedCredentials = {
+      ...passkeyCredentials,
+      credentialId: signed.credentialId
+    };
+    await assertPasskeyMatchesAccount({
+      client: readClient,
+      webauthnValidator: sourceConfig.webauthnValidator,
+      accountAddress,
+      passkeyCredentials: refreshedCredentials
+    });
+    savePasskeyCredentials(refreshedCredentials);
+  }
+  await assertPasskeyUserOpSignatureValid({
+    client: readClient,
+    validatorAddress: sourceConfig.webauthnValidator,
+    accountAddress,
+    userOpHash,
+    signature: packedUserOp.signature
+  });
 
   const userOpForBundler = {
     sender: packedUserOp.sender,
@@ -354,67 +412,133 @@ async function sendTxWithPasskeyForChain(
     signature: packedUserOp.signature
   };
 
-  type RpcRequestArgs = { method: string; params?: unknown[] };
-  const rpcRequest = readClient.request as unknown as (args: RpcRequestArgs) => Promise<unknown>;
-
-  const userOpHashFromBundler = (await rpcRequest({
-    method: 'eth_sendUserOperation',
-    params: [userOpForBundler, sourceConfig.entryPoint]
-  })) as `0x${string}`;
-
-  type UserOpReceipt = { success: boolean; receipt: { transactionHash: `0x${string}` } };
-  let receipt: UserOpReceipt | null = null;
-
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const receiptResult = await rpcRequest({
-      method: 'eth_getUserOperationReceipt',
-      params: [userOpHashFromBundler]
-    });
-
-    if (receiptResult) {
-      receipt = receiptResult as UserOpReceipt;
-      break;
-    }
-  }
-
-  if (!receipt) {
-    throw new Error('Transaction timeout - could not get receipt');
-  }
-
-  if (!receipt.success) {
-    throw new Error('Transaction failed');
-  }
-
-  return receipt.receipt.transactionHash;
+  return await submitUserOpWithFallback({
+    readClient,
+    chainId: sourceConfig.chainId,
+    entryPoint: sourceConfig.entryPoint,
+    userOp: userOpForBundler
+  });
 }
 
-function extractBundleHash(
-  receipt: Awaited<ReturnType<PublicClient['getTransactionReceipt']>>,
-  interopCenter: Address
-): `0x${string}` | undefined {
-  for (const log of receipt.logs) {
-    if (log.address.toLowerCase() !== interopCenter.toLowerCase()) {
-      continue;
-    }
+function buildSendBundleData(
+  destinationChainId: number,
+  destinationRelayAddress: Address,
+  callStarters: DestinationCallStarter[]
+) {
+  return encodeFunctionData({
+    abi: interopCenterAbi,
+    functionName: 'sendBundle',
+    args: [
+      formatEvmV1(BigInt(destinationChainId)),
+      callStarters.map((callStarter) => ({
+        to: formatEvmV1AddressOnly(callStarter.to),
+        data: callStarter.data,
+        callAttributes: callStarter.callAttributes
+      })),
+      [unbundlerAddressAttribute(destinationRelayAddress)]
+    ]
+  });
+}
 
-    try {
-      const decoded = decodeEventLog({
-        abi: interopCenterAbi,
-        data: log.data,
-        topics: log.topics
-      });
+async function resolveInteropSession(
+  rpcClient: PublicClient,
+  accountAddress: Address | undefined,
+  resolvedSourceConfig: SourceInteropConfig,
+  resolvedDestinationConfig: DestinationInteropConfig
+): Promise<ResolvedInteropSession> {
+  const interopCenter = resolvedSourceConfig.interopCenter;
+  const entryPoint = resolvedSourceConfig.entryPoint;
+  const webauthnValidator = resolvedSourceConfig.webauthnValidator;
+  const destinationChainId = resolvedDestinationConfig.chainId;
+  const destinationInvoicePayment = resolvedDestinationConfig.invoicePayment;
+  const destinationRelayAddress = resolvedDestinationConfig.relayAddress;
 
-      if (decoded.eventName === 'InteropBundleSent') {
-        return decoded.args.interopBundleHash;
-      }
-    } catch {
-      // Ignore unrelated logs.
-    }
+  if (!interopCenter) {
+    throw new Error(`Missing interop center address for chain ${resolvedSourceConfig.chainKey}.`);
+  }
+  if (!entryPoint || !webauthnValidator) {
+    throw new Error(
+      `Missing SSO validator or entrypoint config for chain ${resolvedSourceConfig.chainKey}.`
+    );
+  }
+  if (!destinationChainId || !destinationInvoicePayment) {
+    throw new Error('Missing chain C destination config for InvoicePayment.');
+  }
+  if (!destinationRelayAddress) {
+    throw new Error(
+      'Missing chain C interop relay address. Set VITE_INTEROP_RELAY_ADDRESS or VITE_CHAIN_C_INTEROP_RELAY_ADDRESS.'
+    );
   }
 
-  return undefined;
+  const { savedPasskey, savedAccount } = loadExistingPasskey();
+  if (!savedPasskey || !savedAccount) {
+    throw new Error('No SSO account found. Create and link a passkey first.');
+  }
+
+  if (accountAddress && accountAddress.toLowerCase() !== savedAccount.toLowerCase()) {
+    throw new Error('Linked passkey account does not match the current SSO session.');
+  }
+
+  const accountEntryPoint = await readAccountEntryPoint(rpcClient, savedAccount);
+  if (accountEntryPoint && accountEntryPoint.toLowerCase() !== entryPoint.toLowerCase()) {
+    clearSavedAccountAddress();
+    throw new Error(
+      `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but chain ${resolvedSourceConfig.chainKey} expects ${entryPoint}. Re-login and create/link a compatible passkey account.`
+    );
+  }
+
+  await assertPasskeyMatchesAccount({
+    client: rpcClient,
+    webauthnValidator,
+    accountAddress: savedAccount,
+    passkeyCredentials: savedPasskey
+  });
+
+  return {
+    rpcClient,
+    sourceChainId: resolvedSourceConfig.chainId,
+    sourceChainKey: resolvedSourceConfig.chainKey,
+    interopCenter,
+    entryPoint,
+    webauthnValidator,
+    destinationChainId,
+    destinationInvoicePayment,
+    destinationRelayAddress,
+    savedAccount,
+    savedPasskey
+  };
+}
+
+async function submitInteropBundle(
+  session: ResolvedInteropSession,
+  callStarters: DestinationCallStarter[],
+  enableWalletToken?: WalletAuthorizer
+) {
+  const sendBundleData = buildSendBundleData(
+    session.destinationChainId,
+    session.destinationRelayAddress,
+    callStarters
+  );
+
+  return await sendTxWithPasskeyForChain(
+    session.savedAccount,
+    session.savedPasskey,
+    [
+      {
+        to: session.interopCenter,
+        value: 0n,
+        data: sendBundleData
+      }
+    ],
+    buildGasOptions(),
+    session.rpcClient,
+    {
+      chainId: session.sourceChainId,
+      entryPoint: session.entryPoint,
+      webauthnValidator: session.webauthnValidator
+    },
+    enableWalletToken
+  );
 }
 
 export function useInteropInvoice() {
@@ -435,44 +559,18 @@ export function useInteropInvoice() {
 
     const resolvedSourceConfig = sourceConfig.value;
     const resolvedDestinationConfig = destinationConfig.value;
-    const interopCenter = resolvedSourceConfig.interopCenter;
-    const entryPoint = resolvedSourceConfig.entryPoint;
-    const webauthnValidator = resolvedSourceConfig.webauthnValidator;
-    const destinationChainId = resolvedDestinationConfig.chainId;
-    const destinationInvoicePayment = resolvedDestinationConfig.invoicePayment;
     const destinationBillingToken = resolvedDestinationConfig.tokenAddresses[payload.billingTokenSymbol];
 
-    if (!interopCenter) {
-      throw new Error(`Missing interop center address for chain ${resolvedSourceConfig.chainKey}.`);
-    }
-    if (!entryPoint || !webauthnValidator) {
-      throw new Error(
-        `Missing SSO validator or entrypoint config for chain ${resolvedSourceConfig.chainKey}.`
-      );
-    }
-    if (!destinationChainId || !destinationInvoicePayment) {
-      throw new Error('Missing chain C destination config for InvoicePayment.');
-    }
     if (!destinationBillingToken) {
       throw new Error(`Missing chain C token address for ${payload.billingTokenSymbol}.`);
     }
 
-    const { savedPasskey, savedAccount } = loadExistingPasskey();
-    if (!savedPasskey || !savedAccount) {
-      throw new Error('No SSO account found. Create and link a passkey first.');
-    }
-
-    if (account.value && account.value.toLowerCase() !== savedAccount.toLowerCase()) {
-      throw new Error('Linked passkey account does not match the current SSO session.');
-    }
-
-    const accountEntryPoint = await readAccountEntryPoint(currentRpcClient, savedAccount);
-    if (accountEntryPoint && accountEntryPoint.toLowerCase() !== entryPoint.toLowerCase()) {
-      clearSavedAccountAddress();
-      throw new Error(
-        `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but chain ${resolvedSourceConfig.chainKey} expects ${entryPoint}. Re-login and create/link a compatible passkey account.`
-      );
-    }
+    const session = await resolveInteropSession(
+      currentRpcClient,
+      account.value ?? undefined,
+      resolvedSourceConfig,
+      resolvedDestinationConfig
+    );
 
     const createInvoiceData = encodeFunctionData({
       abi: invoicePaymentAbi,
@@ -489,58 +587,96 @@ export function useInteropInvoice() {
       ]
     });
 
-    const sendBundleData = encodeFunctionData({
-      abi: interopCenterAbi,
-      functionName: 'sendBundle',
-      args: [
-        formatEvmV1(BigInt(destinationChainId)),
-        [
-          {
-            to: formatEvmV1AddressOnly(destinationInvoicePayment),
-            data: createInvoiceData,
-            // InvoicePayment exists only on chain C, so this must remain a direct interop call.
-            callAttributes: []
-          }
-        ],
-        []
-      ]
-    });
-
-    const transactionHash = await sendTxWithPasskeyForChain(
-      savedAccount,
-      savedPasskey,
+    const submission = await submitInteropBundle(
+      session,
       [
         {
-          to: interopCenter,
-          value: 0n,
-          data: sendBundleData
+          to: session.destinationInvoicePayment,
+          data: createInvoiceData,
+          // InvoicePayment validates cross-chain creators via the deterministic shadow account.
+          callAttributes: [shadowAccountAttribute()]
         }
       ],
-      buildGasOptions(),
-      currentRpcClient,
-      {
-        chainId: resolvedSourceConfig.chainId,
-        entryPoint,
-        webauthnValidator
-      },
       enableWalletToken as WalletAuthorizer
     );
 
-    const receipt = await currentRpcClient.getTransactionReceipt({ hash: transactionHash });
+    return {
+      transactionHash: submission.txHash,
+      bundleHash: submission.bundleHash,
+      destinationBillingToken,
+      sourceInteropCenter: session.interopCenter,
+      destinationInvoicePayment: session.destinationInvoicePayment,
+      destinationChainId: session.destinationChainId
+    };
+  };
+
+  const sendPayInvoiceBundle = async (
+    payload: SendPayInvoicePayload
+  ): Promise<SendPayInvoiceResult> => {
+    const currentRpcClient = rpcClient.value;
+    if (!currentRpcClient) {
+      throw new Error('Authenticated RPC client not available.');
+    }
+
+    const resolvedSourceConfig = sourceConfig.value;
+    const resolvedDestinationConfig = destinationConfig.value;
+    const invoiceId = payload.invoiceId.trim();
+
+    if (!/^\d+$/.test(invoiceId)) {
+      throw new Error('Invalid invoice ID.');
+    }
+
+    const session = await resolveInteropSession(
+      currentRpcClient,
+      account.value ?? undefined,
+      resolvedSourceConfig,
+      resolvedDestinationConfig
+    );
+
+    const paymentToken = getAddress(payload.paymentToken);
+
+    const approvePaymentData = encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [session.destinationInvoicePayment, MAX_UINT256]
+    });
+    const payInvoiceData = encodeFunctionData({
+      abi: invoicePaymentAbi,
+      functionName: 'payInvoice',
+      args: [BigInt(invoiceId), paymentToken]
+    });
+
+    const submission = await submitInteropBundle(
+      session,
+      [
+        {
+          to: paymentToken,
+          data: approvePaymentData,
+          callAttributes: [shadowAccountAttribute()]
+        },
+        {
+          to: session.destinationInvoicePayment,
+          data: payInvoiceData,
+          callAttributes: [shadowAccountAttribute()]
+        }
+      ],
+      enableWalletToken as WalletAuthorizer
+    );
 
     return {
-      transactionHash,
-      bundleHash: extractBundleHash(receipt, interopCenter),
-      destinationBillingToken,
-      sourceInteropCenter: interopCenter,
-      destinationInvoicePayment,
-      destinationChainId
+      transactionHash: submission.txHash,
+      bundleHash: submission.bundleHash,
+      paymentToken,
+      sourceInteropCenter: session.interopCenter,
+      destinationInvoicePayment: session.destinationInvoicePayment,
+      destinationChainId: session.destinationChainId
     };
   };
 
   return {
     sourceConfig,
     destinationConfig,
-    sendCreateInvoiceBundle
+    sendCreateInvoiceBundle,
+    sendPayInvoiceBundle
   };
 }

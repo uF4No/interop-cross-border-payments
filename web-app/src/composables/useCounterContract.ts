@@ -1,6 +1,7 @@
 import { type Address, type PublicClient, encodeFunctionData, getContract, pad, toHex } from 'viem';
 import { ssoContracts } from '../utils/sso/constants';
 import {
+  assertPasskeyMatchesAccount,
   clearSavedAccountAddress,
   loadExistingPasskey,
   readAccountEntryPoint
@@ -74,7 +75,8 @@ export function useCounterContract(
     const callGasLimit = 500000n;
     const verificationGasLimit = 2000000n;
     const maxFeePerGas = 10000000000n;
-    const maxPriorityFeePerGas = 5000000000n;
+    // Chain A/B bundler expects legacy-style pricing on these local chains.
+    const maxPriorityFeePerGas = maxFeePerGas;
     const preVerificationGas = 200000n;
 
     const accountGasLimits = pad(toHex((verificationGasLimit << 128n) | callGasLimit), {
@@ -109,6 +111,13 @@ export function useCounterContract(
         `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but this app expects ${ssoContracts.entryPoint}. Re-login and create/link a compatible passkey account.`
       );
     }
+
+    await assertPasskeyMatchesAccount({
+      client: rpcClient,
+      webauthnValidator: ssoContracts.webauthnValidator,
+      accountAddress: savedAccount,
+      passkeyCredentials: savedPasskey
+    });
 
     const txData = [
       {

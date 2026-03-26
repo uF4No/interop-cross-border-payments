@@ -12,6 +12,7 @@
     "setup:system": "tsx src/system.ts",
     "setup:app": "tsx src/app.ts",
     "setup-app": "tsx src/setup-app.ts",
+    "userop:direct": "tsx src/tools/send-userop-direct.ts",
     "verify:sso": "tsx src/verify-sso.ts",
     "check:contracts": "tsx src/verify-sso.ts",
     "refresh:env": "tsx src/refresh-env.ts",

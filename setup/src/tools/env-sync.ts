@@ -111,6 +111,13 @@ function syncChain(
   setOptionalEnv(dirPath, `${prefix}CHAIN_${label}_NATIVE_TOKEN_VAULT`, chain.nativeTokenVault);
   setOptionalEnv(dirPath, `${prefix}CHAIN_${label}_INVOICE_PAYMENT`, chain.invoicePayment);
 
+  const oauthClientId = chain.application?.oauthClientId;
+  if (oauthClientId) {
+    setOptionalEnv(dirPath, `${prefix}CLIENT_ID_CHAIN_${label}`, oauthClientId);
+    setOptionalEnv(dirPath, `${prefix}CHAIN_${label}_CLIENT_ID`, oauthClientId);
+    setOptionalEnv(dirPath, `${prefix}PRIVIDIUM_CHAIN_${label}_CLIENT_ID`, oauthClientId);
+  }
+
   syncSso(dirPath, chain.sso, { suffix: `_CHAIN_${label}`, prefix });
 
   for (const tokenKey of tokenKeys) {
@@ -174,6 +181,15 @@ function syncLegacyBackCompat(
   const chainAClientId = chainA?.application?.oauthClientId;
   if (chainAClientId) {
     setDotEnvConfig(args.webAppPath, 'VITE_CLIENT_ID', chainAClientId);
+  }
+
+  const interopRelayAddress =
+    extractConfigOptional(args.setupEnvPath, 'INTEROP_RELAY_ADDRESS') ??
+    extractConfigOptional(args.setupEnvPath, 'PRIVIDIUM_INTEROP_RELAY_ADDRESS');
+  if (interopRelayAddress) {
+    setDotEnvConfig(args.backendPath, 'INTEROP_RELAY_ADDRESS', interopRelayAddress);
+    setDotEnvConfig(args.webAppPath, 'VITE_INTEROP_RELAY_ADDRESS', interopRelayAddress);
+    setDotEnvConfig(args.webAppPath, 'VITE_CHAIN_C_INTEROP_RELAY_ADDRESS', interopRelayAddress);
   }
 }
 

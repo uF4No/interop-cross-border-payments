@@ -6,6 +6,25 @@ import { env } from '../envConfig';
 import { ensureBeaconDeployed } from './beacon';
 
 let runtimeFactoryAddress: Address | null = null;
+const LEGACY_ACCOUNT_ENTRYPOINT_HEX = '4337084d9e255ff0702461cf8895ce9e3b5ff108';
+const MODULUS_256 = 1n << 256n;
+const HEX_WORD_LENGTH = 64;
+
+function toNegatedWordHex(entryPointHex: string): string {
+  const entryPointBigInt = BigInt(`0x${entryPointHex}`);
+  const negated = (MODULUS_256 - entryPointBigInt) % MODULUS_256;
+  return negated.toString(16).padStart(HEX_WORD_LENGTH, '0');
+}
+
+const LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX = toNegatedWordHex(LEGACY_ACCOUNT_ENTRYPOINT_HEX);
+
+function containsLegacyEntrypointMarkers(bytecode: `0x${string}`): boolean {
+  const normalized = bytecode.toLowerCase();
+  return (
+    normalized.includes(LEGACY_ACCOUNT_ENTRYPOINT_HEX) ||
+    normalized.includes(LEGACY_ACCOUNT_ENTRYPOINT_NEGATED_WORD_HEX)
+  );
+}
 
 const MSA_FACTORY_READ_ABI = [
   {
@@ -75,6 +94,19 @@ async function validateFactoryCompatibility(factoryAddress: Address): Promise<Ad
   if (implementationEntryPoint.toLowerCase() !== SSO_CONTRACTS.entryPoint.toLowerCase()) {
     throw new Error(
       `Factory ${factoryAddress} is incompatible: implementation ${implementationFromBeacon} uses EntryPoint ${implementationEntryPoint}, expected ${SSO_CONTRACTS.entryPoint}. Re-run setup to refresh SSO factory/beacon contracts.`
+    );
+  }
+
+  const implementationBytecode = await client.l2.getBytecode({ address: implementationFromBeacon });
+  if (!implementationBytecode || implementationBytecode === '0x') {
+    throw new Error(`Beacon implementation has no runtime bytecode at ${implementationFromBeacon}`);
+  }
+
+  const expectedEntryPointHex = SSO_CONTRACTS.entryPoint.toLowerCase().slice(2);
+  const expectsNonLegacyEntrypoint = expectedEntryPointHex !== LEGACY_ACCOUNT_ENTRYPOINT_HEX;
+  if (expectsNonLegacyEntrypoint && containsLegacyEntrypointMarkers(implementationBytecode)) {
+    throw new Error(
+      `Factory ${factoryAddress} is incompatible: implementation ${implementationFromBeacon} still contains legacy EntryPoint guard markers (${LEGACY_ACCOUNT_ENTRYPOINT_HEX}) even though entryPoint() reports ${implementationEntryPoint}. Re-run setup to redeploy account implementation/beacon/factory.`
     );
   }
 
