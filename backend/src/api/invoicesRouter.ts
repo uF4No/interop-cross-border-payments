@@ -23,6 +23,10 @@ const ADMIN_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae7
 const ADMIN_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address;
 const INVOICE_CHUNK_SIZE = 25;
 const INVOICE_VIEWS = ['all', 'created', 'received'] as const;
+const AUTH_COOLDOWN_MS = 30_000;
+const TOKEN_EXPIRY_BUFFER_MS = 30_000;
+const INVOICE_SNAPSHOT_TTL_MS = 15_000;
+const INVOICE_SNAPSHOT_STALE_IF_ERROR_MS = 60_000;
 const invoiceCreatedEvent = parseAbiItem(
   'event InvoiceCreated(uint256 indexed id, address indexed creatorRefundAddress, address indexed recipientRefundAddress, uint256 creatorChainId, uint256 recipientChainId, address billingToken, uint256 amount)'
 );
@@ -184,6 +188,8 @@ type NormalizedInvoice = {
   sourceTags: InvoiceSourceTag[];
 };
 
+type CachedInvoiceSnapshot = Omit<NormalizedInvoice, 'sourceTags'>;
+
 type ChainCContext = {
   chainId: number;
   rpcUrl: string;
@@ -215,8 +221,23 @@ type InvoiceResponseObject = {
   invoices: NormalizedInvoice[];
 };
 
+type AdminAuthState = {
+  token: string | null;
+  tokenExpiry: number;
+  authInFlight: Promise<string> | null;
+  authCooldownUntil: number;
+};
+
+type InvoiceSnapshotState = {
+  value: CachedInvoiceSnapshot[] | null;
+  fetchedAt: number;
+  inFlight: Promise<CachedInvoiceSnapshot[]> | null;
+};
+
 const invoicesRegistry = new OpenAPIRegistry();
 export const invoicesRouter: Router = express.Router();
+const adminAuthStateByKey = new Map<string, AdminAuthState>();
+const invoiceSnapshotStateByKey = new Map<string, InvoiceSnapshotState>();
 
 invoicesRegistry.registerPath({
   method: 'get',
@@ -330,6 +351,45 @@ function normalizeInvoice(invoice: RawInvoice, sourceTags: InvoiceSourceTag[]): 
   };
 }
 
+function getAdminAuthState(cacheKey: string): AdminAuthState {
+  const existing = adminAuthStateByKey.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const initialState: AdminAuthState = {
+    token: null,
+    tokenExpiry: 0,
+    authInFlight: null,
+    authCooldownUntil: 0
+  };
+  adminAuthStateByKey.set(cacheKey, initialState);
+  return initialState;
+}
+
+function getInvoiceSnapshotState(cacheKey: string): InvoiceSnapshotState {
+  const existing = invoiceSnapshotStateByKey.get(cacheKey);
+  if (existing) {
+    return existing;
+  }
+
+  const initialState: InvoiceSnapshotState = {
+    value: null,
+    fetchedAt: 0,
+    inFlight: null
+  };
+  invoiceSnapshotStateByKey.set(cacheKey, initialState);
+  return initialState;
+}
+
+function parseRetryAfterMs(response: globalThis.Response): number {
+  const retryAfterHeader = response.headers.get('retry-after');
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : Number.NaN;
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : AUTH_COOLDOWN_MS;
+}
+
 async function postJson(url: string, body: Record<string, unknown>) {
   return fetch(url, {
     method: 'POST',
@@ -341,6 +401,19 @@ async function postJson(url: string, body: Record<string, unknown>) {
 }
 
 async function getAdminAuthToken(chainC: ChainCContext): Promise<string> {
+  const cacheKey = `${chainC.chainId}:${chainC.apiUrl}:${ADMIN_ADDRESS.toLowerCase()}`;
+  const state = getAdminAuthState(cacheKey);
+
+  if (state.authInFlight) {
+    return state.authInFlight;
+  }
+  if (Date.now() < state.authCooldownUntil) {
+    throw new Error('Admin auth is cooling down after a rate limit. Retry shortly.');
+  }
+  if (state.token && Date.now() < state.tokenExpiry - TOKEN_EXPIRY_BUFFER_MS) {
+    return state.token;
+  }
+
   const adminAccount = privateKeyToAccount(ADMIN_PRIVATE_KEY);
   if (adminAccount.address.toLowerCase() !== ADMIN_ADDRESS.toLowerCase()) {
     throw new Error('Hardcoded admin private key does not match hardcoded admin address');
@@ -352,54 +425,81 @@ async function getAdminAuthToken(chainC: ChainCContext): Promise<string> {
     baseCandidates.push(`${baseCandidates[0]}/api`);
   }
 
-  let lastError: unknown;
-  for (const baseUrl of baseCandidates) {
+  const run = async () => {
+    let lastError: unknown;
     try {
-      const challengeRes = await postJson(`${baseUrl}/siwe-messages/`, {
-        address: ADMIN_ADDRESS,
-        domain: siweDomain
-      });
+      for (const baseUrl of baseCandidates) {
+        try {
+          const challengeRes = await postJson(`${baseUrl}/siwe-messages/`, {
+            address: ADMIN_ADDRESS,
+            domain: siweDomain
+          });
 
-      if (!challengeRes.ok) {
-        const errorText = await challengeRes.text().catch(() => '');
-        throw new Error(
-          `Failed to request SIWE challenge from ${baseUrl}: ${challengeRes.status} ${challengeRes.statusText} ${errorText}`
-        );
+          if (!challengeRes.ok) {
+            const errorText = await challengeRes.text().catch(() => '');
+            if (challengeRes.status === 429) {
+              state.authCooldownUntil = Date.now() + parseRetryAfterMs(challengeRes);
+            }
+            throw new Error(
+              `Failed to request SIWE challenge from ${baseUrl}: ${challengeRes.status} ${challengeRes.statusText} ${errorText}`
+            );
+          }
+
+          const challengeJson = (await challengeRes.json()) as { message?: string; msg?: string };
+          const message = challengeJson.message ?? challengeJson.msg;
+          if (!message) {
+            throw new Error(`SIWE challenge from ${baseUrl} did not include a message`);
+          }
+
+          const signature = await adminAccount.signMessage({ message });
+          const loginRes = await postJson(`${baseUrl}/auth/login/crypto-native`, {
+            message,
+            signature
+          });
+
+          if (!loginRes.ok) {
+            const errorText = await loginRes.text().catch(() => '');
+            if (loginRes.status === 429) {
+              state.authCooldownUntil = Date.now() + parseRetryAfterMs(loginRes);
+            }
+            throw new Error(
+              `Failed to authenticate admin session against ${baseUrl}: ${loginRes.status} ${loginRes.statusText} ${errorText}`
+            );
+          }
+
+          const loginJson = (await loginRes.json()) as { token?: string; expiresAt?: string };
+          if (!loginJson.token) {
+            throw new Error(`Admin login response from ${baseUrl} did not include a token`);
+          }
+
+          state.token = loginJson.token;
+          state.tokenExpiry = loginJson.expiresAt
+            ? Date.parse(loginJson.expiresAt)
+            : Date.now() + 60 * 60 * 1000;
+          state.authCooldownUntil = 0;
+          return loginJson.token;
+        } catch (error) {
+          lastError = error;
+        }
       }
 
-      const challengeJson = (await challengeRes.json()) as { message?: string; msg?: string };
-      const message = challengeJson.message ?? challengeJson.msg;
-      if (!message) {
-        throw new Error(`SIWE challenge from ${baseUrl} did not include a message`);
-      }
-
-      const signature = await adminAccount.signMessage({ message });
-      const loginRes = await postJson(`${baseUrl}/auth/login/crypto-native`, {
-        message,
-        signature
-      });
-
-      if (!loginRes.ok) {
-        const errorText = await loginRes.text().catch(() => '');
-        throw new Error(
-          `Failed to authenticate admin session against ${baseUrl}: ${loginRes.status} ${loginRes.statusText} ${errorText}`
-        );
-      }
-
-      const loginJson = (await loginRes.json()) as { token?: string };
-      if (!loginJson.token) {
-        throw new Error(`Admin login response from ${baseUrl} did not include a token`);
-      }
-
-      return loginJson.token;
+      throw lastError instanceof Error
+        ? lastError
+        : new Error('Failed to authenticate admin session for chain C');
     } catch (error) {
-      lastError = error;
+      state.token = null;
+      state.tokenExpiry = 0;
+      if (Date.now() >= state.authCooldownUntil) {
+        state.authCooldownUntil = Date.now() + AUTH_COOLDOWN_MS;
+      }
+      throw error;
+    } finally {
+      state.authInFlight = null;
     }
-  }
+  };
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error('Failed to authenticate admin session for chain C');
+  state.authInFlight = run();
+  return state.authInFlight;
 }
 
 function createChainCClient(chainC: ChainCContext, token: string) {
@@ -517,6 +617,52 @@ async function readAllInvoiceIds(
   );
 }
 
+async function readCachedInvoiceSnapshot(
+  client: ReturnType<typeof createChainCClient>,
+  chainC: ChainCContext
+): Promise<CachedInvoiceSnapshot[]> {
+  const cacheKey = `${chainC.chainId}:${chainC.rpcUrl}:${chainC.invoicePayment.toLowerCase()}`;
+  const state = getInvoiceSnapshotState(cacheKey);
+  const now = Date.now();
+
+  if (state.value && now - state.fetchedAt < INVOICE_SNAPSHOT_TTL_MS) {
+    return state.value;
+  }
+
+  if (state.inFlight) {
+    return state.inFlight;
+  }
+
+  const run = async () => {
+    try {
+      const orderedInvoiceIds = await readAllInvoiceIds(client, chainC.invoicePayment);
+      const invoices = await readInvoiceDetails(client, orderedInvoiceIds, chainC.invoicePayment);
+      const snapshot = invoices.map((invoice) => {
+        const { sourceTags, ...normalized } = normalizeInvoice(invoice, []);
+        return normalized;
+      });
+
+      state.value = snapshot;
+      state.fetchedAt = Date.now();
+      return snapshot;
+    } catch (error) {
+      if (state.value && now - state.fetchedAt < INVOICE_SNAPSHOT_STALE_IF_ERROR_MS) {
+        console.warn(
+          'Serving stale invoice snapshot after refresh failure',
+          error
+        );
+        return state.value;
+      }
+      throw error;
+    } finally {
+      state.inFlight = null;
+    }
+  };
+
+  state.inFlight = run();
+  return state.inFlight;
+}
+
 function resolveRequestedAccountAddress(
   req: Request,
   options: { defaultToAdmin: boolean }
@@ -624,11 +770,11 @@ async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView)
   }
 
   if (view) {
-    const orderedInvoiceIds = await readAllInvoiceIds(client, chainC.invoicePayment);
-    const invoices = await readInvoiceDetails(client, orderedInvoiceIds, chainC.invoicePayment);
-    const normalizedInvoices = invoices.map((invoice) =>
-      normalizeInvoice(invoice, sourceMap.get(invoice.id.toString()) ?? [])
-    );
+    const cachedSnapshot = await readCachedInvoiceSnapshot(client, chainC);
+    const normalizedInvoices = cachedSnapshot.map((invoice) => ({
+      ...invoice,
+      sourceTags: sourceMap.get(invoice.id) ?? []
+    }));
     const countsByView = {
       all: normalizedInvoices.length,
       created: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('created')).length,

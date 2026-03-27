@@ -35,6 +35,8 @@ export type InvoiceRecord = {
   id: string;
   creator: string;
   recipient: string;
+  creatorRefundAddress: string;
+  recipientRefundAddress: string;
   billingToken: string;
   amount: string;
   status: string;

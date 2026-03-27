@@ -133,6 +133,15 @@ const readChainEnv = (chainKey: PrividiumChainKey): ChainEnvConfig => {
   };
 };
 
+export function getPrividiumBranding(chainKey: PrividiumChainKey) {
+  const chainConfig = readChainEnv(chainKey);
+  return {
+    companyName: chainConfig.companyName,
+    accentColor: chainConfig.accentColor,
+    companyIcon: chainConfig.companyIcon
+  };
+}
+
 const buildSdkChain = (config: ChainEnvConfig) =>
   ({
     id: config.chainId,
@@ -610,14 +619,7 @@ export function usePrividium() {
     isAuthenticated: computed(() => isAuthenticated.value),
     isAuthenticating: computed(() => isAuthenticating.value),
     selectedChainKey: computed(() => selectedChainKey.value),
-    branding: computed(() => {
-      const chainConfig = readChainEnv(selectedChainKey.value);
-      return {
-        companyName: chainConfig.companyName,
-        accentColor: chainConfig.accentColor,
-        companyIcon: chainConfig.companyIcon
-      };
-    }),
+    branding: computed(() => getPrividiumBranding(selectedChainKey.value)),
     setSelectedChainKey,
     userEmail,
     userName,

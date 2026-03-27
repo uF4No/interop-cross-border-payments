@@ -2,7 +2,32 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { getAddress, type Address } from 'viem';
 
 import { FINALIZED_TXS_FILE, PENDING_TXS_FILE } from '../constants';
+import { env } from '../envConfig';
 import type { FinalizedTxnState, Metadata, PendingTxnState } from '../types';
+
+const DEFAULT_SOURCE_CHAIN_ID = env.PRIVIDIUM_CHAIN_ID;
+
+function normalizePendingTx(tx: PendingTxnState): PendingTxnState {
+  return {
+    ...tx,
+    accountAddress: getAddress(tx.accountAddress),
+    sourceChainId:
+      Number.isFinite(tx.sourceChainId) && tx.sourceChainId > 0
+        ? tx.sourceChainId
+        : DEFAULT_SOURCE_CHAIN_ID
+  };
+}
+
+function normalizeFinalizedTx(tx: FinalizedTxnState): FinalizedTxnState {
+  return {
+    ...tx,
+    accountAddress: getAddress(tx.accountAddress),
+    sourceChainId:
+      Number.isFinite(tx.sourceChainId) && tx.sourceChainId > 0
+        ? tx.sourceChainId
+        : DEFAULT_SOURCE_CHAIN_ID
+  };
+}
 
 // Load or initialize pending transactions
 export function loadPendingTxs(accountAddress?: Address): PendingTxnState[] {
@@ -15,11 +40,11 @@ export function loadPendingTxs(accountAddress?: Address): PendingTxnState[] {
     if (!sanitized) {
       return [];
     }
-    const json = JSON.parse(sanitized);
+    const json = (JSON.parse(sanitized) as PendingTxnState[]).map(normalizePendingTx);
     if (accountAddress) {
       const normalizedAccount = getAddress(accountAddress).toLowerCase();
       return json.filter(
-        (tx: PendingTxnState) => getAddress(tx.accountAddress).toLowerCase() === normalizedAccount
+        (tx: PendingTxnState) => tx.accountAddress.toLowerCase() === normalizedAccount
       );
     }
     return json;
@@ -34,11 +59,11 @@ export function savePendingTxs(txs: PendingTxnState[]) {
 export function loadFinalizedTxs(accountAddress?: Address): FinalizedTxnState[] {
   if (existsSync(FINALIZED_TXS_FILE)) {
     const data = readFileSync(FINALIZED_TXS_FILE, 'utf-8');
-    const json = JSON.parse(data);
+    const json = (JSON.parse(data) as FinalizedTxnState[]).map(normalizeFinalizedTx);
     if (accountAddress) {
       const normalizedAccount = getAddress(accountAddress).toLowerCase();
       return json.filter(
-        (tx: FinalizedTxnState) => getAddress(tx.accountAddress).toLowerCase() === normalizedAccount
+        (tx: FinalizedTxnState) => tx.accountAddress.toLowerCase() === normalizedAccount
       );
     }
     return json;
@@ -50,7 +75,12 @@ export function saveFinalizedTxs(txs: FinalizedTxnState[]) {
   writeFileSync(FINALIZED_TXS_FILE, JSON.stringify(txs, null, 2));
 }
 
-export function addPendingTx(hash: `0x${string}`, metadata: Metadata, accountAddress: Address) {
+export function addPendingTx(
+  hash: `0x${string}`,
+  metadata: Metadata,
+  accountAddress: Address,
+  sourceChainId: number
+) {
   const pending = loadPendingTxs();
   const finalized = loadFinalizedTxs();
   const normalizedAccountAddress = getAddress(accountAddress);
@@ -63,7 +93,8 @@ export function addPendingTx(hash: `0x${string}`, metadata: Metadata, accountAdd
     status: 'pending',
     action: metadata.action || 'Unknown',
     amount: metadata.amount || '0',
-    accountAddress: normalizedAccountAddress
+    accountAddress: normalizedAccountAddress,
+    sourceChainId
   });
   savePendingTxs(pending);
 }

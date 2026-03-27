@@ -25,6 +25,7 @@ deployAccountRouter.post('/', async (req: Request, res: Response) => {
   console.log('deploying account with args:', args);
   let serviceResponse: ServiceResponse<unknown>;
   const BodySchema = z.object({
+    chainKey: z.enum(['A', 'B']),
     userId: z.string().min(1),
     originDomain: z.string().min(1),
     credentialId: z.string().min(10),
@@ -35,6 +36,7 @@ deployAccountRouter.post('/', async (req: Request, res: Response) => {
     serviceResponse = ServiceResponse.failure('Missing required args', null);
   } else {
     const deployResult = await deploySmartAccount(
+      args.chainKey,
       args.userId,
       args.originDomain,
       args.credentialId,

@@ -10,10 +10,6 @@ interface IERC20 {
     function allowance(address owner, address spender) external view returns (uint256);
 }
 
-interface INativeTokenVault {
-    function assetId(address token) external view returns (bytes32);
-}
-
 struct InteropCallStarter {
     bool isService;
     address to;
@@ -61,6 +57,7 @@ contract InvoicePayment {
 
     // Admin address
     address public admin;
+    address public payoutOperator;
     
     // Invoice status enum
     enum InvoiceStatus {
@@ -100,7 +97,7 @@ contract InvoicePayment {
         address token2;             // Second token address
         uint256 rate;               // Exchange rate with 18 decimals precision
     }
-    
+
     // Counter for invoice IDs
     uint256 private _nextInvoiceId = 1;
     
@@ -122,11 +119,15 @@ contract InvoicePayment {
     // Mapping for exchange rates between tokens
     mapping(address => mapping(address => uint256)) public exchangeRates;
 
+    // Tracks whether a cross-chain creator payout has already been initiated for a paid invoice.
+    mapping(uint256 => bool) public creatorPayoutInitiated;
+
     /// @notice Contract constructor
     /// @param _admin Address of the admin who can update contract parameters
     constructor(address _admin) {
         require(_admin != address(0), "Admin cannot be zero address");
         admin = _admin;
+        payoutOperator = _admin;
     }
 
     // Modifier for admin-only functions
@@ -139,6 +140,12 @@ contract InvoicePayment {
     function setAdmin(address newAdmin) external onlyAdmin {
         require(newAdmin != address(0), "InvoicePayment: new admin is the zero address");
         admin = newAdmin;
+    }
+
+    function setPayoutOperator(address newPayoutOperator) external onlyAdmin {
+        require(newPayoutOperator != address(0), "InvoicePayment: payout operator is the zero address");
+        payoutOperator = newPayoutOperator;
+        emit PayoutOperatorUpdated(newPayoutOperator);
     }
     
     /// @notice Sets the cross-chain fee.
@@ -189,6 +196,15 @@ contract InvoicePayment {
     
     event CrossChainFeeUpdated(uint256 newFee);
     event CrossChainTransferInitiated(address token, uint256 amount, address recipient, uint256 chainId);
+    event PayoutOperatorUpdated(address indexed newOperator);
+    event CreatorPayoutReleased(
+        uint256 indexed id,
+        address indexed payoutOperator,
+        address indexed creatorRefundAddress,
+        uint256 creatorChainId,
+        address billingToken,
+        uint256 amount
+    );
 
     function _expectedCrossChainSender(address account, uint256 chainId) internal view returns (address) {
         if (chainId == block.chainid) {
@@ -199,6 +215,10 @@ contract InvoicePayment {
             chainId,
             account
         );
+    }
+
+    function _encodeNativeTokenVaultAssetId(uint256 chainId, address token) internal pure returns (bytes32) {
+        return keccak256(abi.encode(chainId, L2_NATIVE_TOKEN_VAULT_ADDRESS, token));
     }
     
     /**
@@ -386,40 +406,72 @@ contract InvoicePayment {
         
         // Calculate payment amount based on exchange rate
         uint256 paymentAmount = getConversionAmount(invoice.billingToken, paymentToken, invoice.amount);
-        
-        // Mark invoice as paid
-        invoice.status = InvoiceStatus.Paid;
-        invoice.paymentToken = paymentToken;
-        invoice.paymentAmount = paymentAmount;
-        invoice.paidAt = block.timestamp;
-        
-        // Transfer tokens from payer to contract
-        IERC20(paymentToken).transferFrom(msg.sender, address(this), paymentAmount);
 
-        require(
-            IERC20(invoice.billingToken).balanceOf(address(this)) >= invoice.amount,
-            "Contract lacks enough billing token"
-        );
-        
-        // Transfer billing token to creator (handle cross-chain if needed)
-        if (invoice.creatorChainId == block.chainid) {
-            // Same chain - direct transfer to creator refund address
-            IERC20(invoice.billingToken).transfer(invoice.creatorRefundAddress, invoice.amount);
-        } else {
-            // Cross-chain transfer to creator refund address
-            _transferTokens(
-                invoice.billingToken, 
-                invoice.amount, 
-                invoice.creatorRefundAddress, 
-                invoice.creatorChainId
-            );
-        }
+        _collectPayment(msg.sender, paymentToken, paymentAmount);
+        _recordPayment(invoice, paymentToken, paymentAmount);
+        _settleCreatorPayment(invoiceId, invoice);
         
         emit InvoicePaid(
             invoiceId,
             msg.sender,
             paymentToken,
             paymentAmount,
+            invoice.amount
+        );
+    }
+
+    function _collectPayment(address payer, address paymentToken, uint256 paymentAmount) internal {
+        require(
+            IERC20(paymentToken).transferFrom(payer, address(this), paymentAmount),
+            "Payment token transfer failed"
+        );
+    }
+
+    function _recordPayment(Invoice storage invoice, address paymentToken, uint256 paymentAmount) internal {
+        invoice.status = InvoiceStatus.Paid;
+        invoice.paymentToken = paymentToken;
+        invoice.paymentAmount = paymentAmount;
+        invoice.paidAt = block.timestamp;
+    }
+
+    function _settleCreatorPayment(uint256 invoiceId, Invoice storage invoice) internal {
+        require(
+            IERC20(invoice.billingToken).balanceOf(address(this)) >= invoice.amount,
+            "Contract lacks enough billing token"
+        );
+
+        if (invoice.creatorChainId == block.chainid) {
+            require(
+                IERC20(invoice.billingToken).transfer(invoice.creatorRefundAddress, invoice.amount),
+                "Billing token transfer failed"
+            );
+            return;
+        }
+
+        require(!creatorPayoutInitiated[invoiceId], "Creator payout already initiated");
+    }
+
+    function triggerCreatorPayout(uint256 invoiceId) external {
+        Invoice storage invoice = invoices[invoiceId];
+        require(invoice.id == invoiceId, "InvoicePayment: invoice does not exist");
+        require(invoice.status == InvoiceStatus.Paid, "InvoicePayment: invoice is not paid");
+        require(invoice.creatorChainId != block.chainid, "InvoicePayment: creator payout is local");
+        require(!creatorPayoutInitiated[invoiceId], "InvoicePayment: payout already initiated");
+        require(payoutOperator != address(0), "InvoicePayment: payout operator is not set");
+
+        creatorPayoutInitiated[invoiceId] = true;
+
+        require(
+            IERC20(invoice.billingToken).transfer(payoutOperator, invoice.amount),
+            "Billing token payout release failed"
+        );
+
+        emit CreatorPayoutReleased(
+            invoiceId,
+            payoutOperator,
+            invoice.creatorRefundAddress,
+            invoice.creatorChainId,
+            invoice.billingToken,
             invoice.amount
         );
     }
@@ -469,14 +521,13 @@ contract InvoicePayment {
             crossChainFee
         );
 
-        bytes32 assetId = INativeTokenVault(L2_NATIVE_TOKEN_VAULT_ADDRESS).assetId(_tokenAddress);
         executionCallStarters[0] = InteropCallStarter(
             false,
             L2_ASSET_ROUTER_ADDRESS,
             bytes.concat(
                 bytes1(0x01),
                 abi.encode(
-                    assetId,
+                    _encodeNativeTokenVaultAssetId(block.chainid, _tokenAddress),
                     abi.encode(
                         _amount,
                         _recipient,
@@ -636,7 +687,7 @@ contract InvoicePayment {
         require(invoice.id == invoiceId, "InvoicePayment: invoice does not exist");
         return invoice;
     }
-    
+
     /**
      * @dev Get multiple invoices details at once
      * @param invoiceIds Array of invoice IDs to fetch

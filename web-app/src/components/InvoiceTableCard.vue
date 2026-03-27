@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { formatUnits, getAddress, isAddress } from 'viem';
 
 import BaseIcon from './BaseIcon.vue';
 import { useInvoices } from '../composables/useInvoices';
@@ -23,8 +24,12 @@ const {
   hasInvoices,
   isEmpty,
   isLoading,
+  isManualRefreshing,
+  isPolling,
   invoices,
+  lastUpdatedAt,
   loadInvoices,
+  refreshIntervalMs,
   selectedTargetChainId,
   selectedTargetChainLabel,
   selectedView,
@@ -35,12 +40,24 @@ const {
 } = useInvoices();
 
 const env = import.meta.env as Record<string, string | undefined>;
+const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit'
+});
 
 const viewLabels: Record<InvoiceView, string> = {
   all: 'All',
   created: 'Created by me',
   received: 'Received by me'
 };
+const autoRefreshSeconds = Math.floor(refreshIntervalMs / 1000);
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? timestampFormatter.format(new Date(lastUpdatedAt.value)) : ''
+);
+const showInitialLoadingState = computed(() => isLoading.value && !lastUpdatedAt.value);
+const showBlockingErrorState = computed(() => Boolean(errorMessage.value) && !lastUpdatedAt.value);
+const showInlineErrorNotice = computed(() => Boolean(errorMessage.value) && Boolean(lastUpdatedAt.value));
 
 const emptyStateTitle = computed(() => {
   if (selectedView.value === 'created') return 'No created invoices';
@@ -75,6 +92,72 @@ const getStatusClass = (status: string) =>
 const truncateMiddle = (value: string, head = 8, tail = 6) =>
   value.length > head + tail + 3 ? `${value.slice(0, head)}...${value.slice(-tail)}` : value;
 
+const formatCompactAddress = (value: string) => truncateMiddle(value, 6, 4);
+const addThousandsSeparators = (value: string) =>
+  value.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+const billingTokenSymbols = ['USDC', 'SGD', 'TBILL'] as const;
+
+type BillingTokenSymbol = (typeof billingTokenSymbols)[number];
+type FormattedInvoiceAmount = {
+  whole: string;
+  fractionDisplay: string;
+  full: string;
+};
+
+const readConfiguredTokenAddress = (symbol: BillingTokenSymbol) => {
+  const candidates = [
+    `VITE_TOKEN_${symbol}_ADDRESS_CHAIN_C`,
+    `VITE_${symbol}_TOKEN_ADDRESS_CHAIN_C`,
+    `VITE_TOKEN_${symbol}_ADDRESS`,
+    `VITE_${symbol}_TOKEN_ADDRESS`,
+    `VITE_TOKEN_${symbol}_ADDRESS_CHAIN_A`,
+    `VITE_${symbol}_TOKEN_ADDRESS_CHAIN_A`,
+    `VITE_TOKEN_${symbol}_ADDRESS_CHAIN_B`,
+    `VITE_${symbol}_TOKEN_ADDRESS_CHAIN_B`
+  ] as const;
+
+  for (const key of candidates) {
+    const value = env[key]?.trim();
+    if (value && isAddress(value)) {
+      return getAddress(value);
+    }
+  }
+
+  return null;
+};
+
+const billingTokenSymbolByAddress = new Map<string, BillingTokenSymbol>(
+  billingTokenSymbols.flatMap((symbol) => {
+    const address = readConfiguredTokenAddress(symbol);
+    return address ? [[address.toLowerCase(), symbol]] : [];
+  })
+);
+
+const getBillingTokenSymbol = (address: string) =>
+  billingTokenSymbolByAddress.get(address.toLowerCase()) ?? 'TOKEN';
+
+const formatInvoiceAmount = (rawAmount: string): FormattedInvoiceAmount => {
+  try {
+    const full = formatUnits(BigInt(rawAmount), 18);
+    const [whole, fraction = ''] = full.split('.');
+    const trimmedFraction = fraction.replace(/0+$/g, '');
+
+    return {
+      whole: addThousandsSeparators(whole || '0'),
+      fractionDisplay: trimmedFraction ? trimmedFraction.slice(0, 6) : '00',
+      full
+    };
+  } catch {
+    const [whole, fraction = ''] = rawAmount.split('.');
+    return {
+      whole: addThousandsSeparators(whole || '0'),
+      fractionDisplay: fraction ? fraction.slice(0, 6) : '00',
+      full: rawAmount
+    };
+  }
+};
+
 const readChainId = (...keys: string[]) => {
   for (const key of keys) {
     const value = env[key]?.trim();
@@ -102,6 +185,7 @@ const formatChainLabel = (chainId: number) =>
 const normalizeInvoiceStatus = (invoice: InvoiceRecord) => invoice.status.trim().toLowerCase();
 
 const canPayInvoice = (invoice: InvoiceRecord) =>
+  invoice.sourceTags.includes('pending') &&
   normalizeInvoiceStatus(invoice) === 'created' &&
   props.activeChainId === invoice.recipientChainId &&
   !props.isInteropProcessing;
@@ -124,6 +208,9 @@ const payButtonTitle = (invoice: InvoiceRecord) => {
   if (status !== 'created') {
     return `Invoice is already ${status}.`;
   }
+  if (!invoice.sourceTags.includes('pending')) {
+    return 'Only invoices assigned to the connected wallet can be paid.';
+  }
   if (props.isInteropProcessing) {
     return 'Another interop transaction is already in progress.';
   }
@@ -139,6 +226,10 @@ const handlePayClick = (invoice: InvoiceRecord) => {
   }
   emit('pay', invoice);
 };
+
+defineExpose({
+  refreshInvoices: () => loadInvoices()
+});
 </script>
 
 <template>
@@ -154,6 +245,20 @@ const handlePayClick = (invoice: InvoiceRecord) => {
         <p class="text-sm text-slate-500">
           Fetches every chain C invoice once, then filters locally for the connected wallet.
         </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <span
+            class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"
+          >
+            <span
+              class="h-2 w-2 rounded-full"
+              :class="isPolling ? 'bg-sky-500 animate-pulse' : 'bg-emerald-500'"
+            ></span>
+            Auto-refresh every {{ autoRefreshSeconds }}s
+          </span>
+          <span v-if="lastUpdatedLabel" class="text-xs text-slate-400">
+            Last updated {{ lastUpdatedLabel }}
+          </span>
+        </div>
         <div class="flex flex-wrap gap-2">
           <button
             v-for="view in availableViews"
@@ -213,15 +318,19 @@ const handlePayClick = (invoice: InvoiceRecord) => {
 
       <button
         @click="loadInvoices"
-        :disabled="isLoading"
+        :disabled="isLoading || isManualRefreshing"
         class="enterprise-button-secondary w-full md:w-auto"
       >
-        <BaseIcon name="ArrowPathIcon" :class="{ 'animate-spin': isLoading }" class="w-4 h-4" />
-        Refresh invoices
+        <BaseIcon
+          name="ArrowPathIcon"
+          :class="{ 'animate-spin': isManualRefreshing }"
+          class="w-4 h-4"
+        />
+        {{ isManualRefreshing ? 'Refreshing invoices' : 'Refresh invoices' }}
       </button>
     </div>
 
-    <div v-if="isLoading" class="px-8 py-12 space-y-4">
+    <div v-if="showInitialLoadingState" class="px-8 py-12 space-y-4">
       <div class="flex items-center gap-3 text-slate-500">
         <BaseIcon name="ArrowPathIcon" class="w-5 h-5 animate-spin" />
         <span class="text-sm font-medium">Loading invoices...</span>
@@ -237,7 +346,7 @@ const handlePayClick = (invoice: InvoiceRecord) => {
       </div>
     </div>
 
-    <div v-else-if="errorMessage" class="px-8 py-12">
+    <div v-else-if="showBlockingErrorState" class="px-8 py-12">
       <div class="rounded-3xl border border-red-100 bg-red-50 px-6 py-6 flex items-start gap-4">
         <BaseIcon name="ExclamationTriangleIcon" class="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
         <div class="min-w-0 flex-1">
@@ -255,35 +364,44 @@ const handlePayClick = (invoice: InvoiceRecord) => {
       </div>
     </div>
 
-    <div v-else-if="isEmpty" class="px-8 py-16 text-center">
-      <BaseIcon name="InboxIcon" class="w-12 h-12 text-slate-200 mx-auto mb-4" />
-      <p class="text-slate-400 text-sm font-medium">{{ emptyStateTitle }}</p>
-      <p class="text-slate-500 text-sm mt-2">{{ emptyStateDescription }}</p>
-    </div>
+    <div v-else class="px-8 py-6 space-y-4">
+      <div
+        v-if="showInlineErrorNotice"
+        class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
+      >
+        Unable to refresh invoices. Showing the last loaded snapshot.
+        <span class="mt-1 block" style="overflow-wrap:anywhere;">{{ errorMessage }}</span>
+      </div>
 
-    <div v-else-if="hasInvoices" class="overflow-x-auto">
-      <table class="min-w-[1280px] w-full border-separate border-spacing-0">
-        <thead class="bg-slate-50/80">
-          <tr>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">ID</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Creator</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Recipient</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Billing Token</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Amount</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Status</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Creator Chain</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Recipient Chain</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Text</th>
-            <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Action</th>
-          </tr>
-        </thead>
+      <div v-if="isEmpty" class="py-10 text-center">
+        <BaseIcon name="InboxIcon" class="w-12 h-12 text-slate-200 mx-auto mb-4" />
+        <p class="text-slate-400 text-sm font-medium">{{ emptyStateTitle }}</p>
+        <p class="text-slate-500 text-sm mt-2">{{ emptyStateDescription }}</p>
+      </div>
 
-        <tbody>
-          <tr
-            v-for="invoice in invoices"
-            :key="invoice.id"
-            class="border-t border-slate-100 hover:bg-slate-50/70 transition-colors"
-          >
+      <div v-else-if="hasInvoices" class="overflow-x-auto">
+        <table class="min-w-[1180px] w-full border-separate border-spacing-0">
+          <thead class="bg-slate-50/80">
+            <tr>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">ID</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Creator</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Recipient</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Billing Token</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Amount</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Status</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Creator Chain</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Recipient Chain</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Text</th>
+              <th class="px-4 py-4 text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Action</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            <tr
+              v-for="invoice in invoices"
+              :key="invoice.id"
+              class="border-t border-slate-100 hover:bg-slate-50/70 transition-colors"
+            >
             <td class="px-4 py-4">
               <div class="flex flex-col gap-1">
                 <span class="font-mono text-xs font-semibold text-slate-700" :title="invoice.id">
@@ -292,22 +410,34 @@ const handlePayClick = (invoice: InvoiceRecord) => {
               </div>
             </td>
             <td class="px-4 py-4">
-              <span class="font-mono text-xs text-slate-600" :title="invoice.creator">
-                {{ truncateMiddle(invoice.creator) }}
+              <span class="font-mono text-xs text-slate-600 whitespace-nowrap" :title="invoice.creator">
+                {{ formatCompactAddress(invoice.creator) }}
               </span>
             </td>
             <td class="px-4 py-4">
-              <span class="font-mono text-xs text-slate-600" :title="invoice.recipient">
-                {{ truncateMiddle(invoice.recipient) }}
+              <span class="font-mono text-xs text-slate-600 whitespace-nowrap" :title="invoice.recipient">
+                {{ formatCompactAddress(invoice.recipient) }}
               </span>
             </td>
             <td class="px-4 py-4">
-              <span class="font-mono text-xs text-slate-600" :title="invoice.billingToken">
-                {{ truncateMiddle(invoice.billingToken) }}
-              </span>
+              <div class="flex flex-col gap-0.5" :title="invoice.billingToken">
+                <span class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-800">
+                  {{ getBillingTokenSymbol(invoice.billingToken) }}
+                </span>
+                <span class="font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                  {{ formatCompactAddress(invoice.billingToken) }}
+                </span>
+              </div>
             </td>
             <td class="px-4 py-4">
-              <span class="text-sm font-semibold text-slate-900 tabular-nums">{{ invoice.amount }}</span>
+              <div class="flex flex-col gap-0.5 tabular-nums" :title="formatInvoiceAmount(invoice.amount).full">
+                <span class="text-sm font-semibold text-slate-900">
+                  {{ formatInvoiceAmount(invoice.amount).whole }}
+                </span>
+                <span class="text-[11px] font-medium text-slate-400">
+                  .{{ formatInvoiceAmount(invoice.amount).fractionDisplay }}
+                </span>
+              </div>
             </td>
             <td class="px-4 py-4">
               <span
@@ -349,9 +479,10 @@ const handlePayClick = (invoice: InvoiceRecord) => {
                 <span>{{ payButtonLabel(invoice) }}</span>
               </button>
             </td>
-          </tr>
-        </tbody>
-      </table>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 </template>

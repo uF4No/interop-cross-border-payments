@@ -37,6 +37,7 @@ const DEFAULT_NATIVE_TOKEN_VAULT_ADDRESS = '0x0000000000000000000000000000000000
 const DEFAULT_L2_INTEROP_CENTER_ADDRESS = '0x0000000000000000000000000000000000010010' as Address;
 const DEFAULT_ENTRYPOINT_MIN_BALANCE_WEI = 10_000_000_000_000_000n; // 0.01 ETH
 const DEFAULT_ENTRYPOINT_TARGET_BALANCE_WEI = 50_000_000_000_000_000n; // 0.05 ETH
+const DEFAULT_INVOICE_CONTRACT_INITIAL_ETH_WEI = 100_000_000_000_000_000n; // 0.1 ETH
 
 type ChainConfig = {
   key: 'a' | 'b' | 'c';
@@ -279,6 +280,11 @@ async function main() {
     extractConfigOptional(setupEnvPath, 'ENTRYPOINT_TARGET_BALANCE_WEI'),
     DEFAULT_ENTRYPOINT_TARGET_BALANCE_WEI
   );
+  const invoiceContractInitialEthWei = toWei(
+    'INVOICE_CONTRACT_INITIAL_ETH',
+    extractConfigOptional(setupEnvPath, 'INVOICE_CONTRACT_INITIAL_ETH'),
+    DEFAULT_INVOICE_CONTRACT_INITIAL_ETH_WEI
+  );
   const l1InteropHandler = extractConfigOptional(backendEnvPath, 'L1_INTEROP_HANDLER');
 
   console.log('\nValidating chains and authenticating admin sessions...');
@@ -351,6 +357,7 @@ async function main() {
     contractsDir,
     executorPrivateKey,
     adminAddress,
+    invoiceInitialEthWei: invoiceContractInitialEthWei,
     nativeTokenVaultAddress,
     interopCenterAddress: l2InteropCenter,
     chainA: {

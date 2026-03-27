@@ -2,22 +2,24 @@ import type { ProofNormalized, ReceiptWithL2ToL1 } from '@matterlabs/zksync-js/c
 import { type Address, type Hex, keccak256 } from 'viem';
 
 import L1_INTEROP_HANDLER_ABI_JSON from '../abis/L1InteropHandler.json';
-import { client, sdk } from '../client';
+import { client, getChainScopedClients } from '../client';
 import { BASE_TOKEN_ADDRESS, L1_INTEROP_HANDLER, L2_INTEROP_CENTER } from '../constants';
 import type { FinalizeAttemptStatus, GetParamsResult, InteropParams } from '../types';
 
 export async function finalizeTx(
   txHash: Hex,
-  accountAddress: Address
+  accountAddress: Address,
+  sourceChainId: number
 ): Promise<FinalizeAttemptStatus> {
   try {
+    const { client: sourceClient, sdk: sourceSdk } = getChainScopedClients(sourceChainId);
     console.log(`\n${'='.repeat(80)}`);
     console.log(`🚀 Attempting to finalize: ${txHash}`);
     console.log('='.repeat(80));
 
     // Step 1: Get receipt with L2-to-L1 logs
     console.log('📜 Getting receipt with L2-to-L1 logs...');
-    const receipt = (await client.zks.getReceiptWithL2ToL1(txHash)) as ReceiptWithL2ToL1 | null;
+    const receipt = (await sourceClient.zks.getReceiptWithL2ToL1(txHash)) as ReceiptWithL2ToL1 | null;
 
     if (!receipt || receipt.status !== '0x1') {
       console.log('❌ Transaction not found or not successful');
@@ -40,7 +42,7 @@ export async function finalizeTx(
 
     if (baseTokenLogIndex >= 0) {
       console.log(`💸 Base-token withdrawal log detected (index ${baseTokenLogIndex}).`);
-      const status = await sdk.withdrawals.status(txHash);
+      const status = await sourceSdk.withdrawals.status(txHash);
 
       if (status.phase === 'FINALIZED') {
         console.log(`✅ Withdrawal already finalized for ${txHash}`);
@@ -48,8 +50,8 @@ export async function finalizeTx(
       } else if (status.phase === 'READY_TO_FINALIZE') {
         // Ready to finalize - execute now
         console.log('🚀 Withdrawal is ready - finalizing now...');
-        await sdk.withdrawals.tryFinalize(txHash);
-        await sdk.withdrawals.wait(txHash, { for: 'finalized' });
+        await sourceSdk.withdrawals.tryFinalize(txHash);
+        await sourceSdk.withdrawals.wait(txHash, { for: 'finalized' });
         console.log(`✅ Withdrawal finalized for ${txHash}`);
         // Continue to check if there's an L2InteropCenter message to finalize
       } else {
@@ -69,7 +71,7 @@ export async function finalizeTx(
     }
 
     // Step 3: Get proof
-    const proof = await getProof(txHash, logIndex);
+    const proof = await getProof(sourceClient, txHash, logIndex);
     if (!proof) {
       console.log('⏳ Proof not available yet - message not finalized on L2');
       return { success: false, reason: 'proof_not_ready' };
@@ -105,11 +107,15 @@ async function getLogIndex(receipt: ReceiptWithL2ToL1) {
   return logIndex ?? -1;
 }
 
-async function getProof(txHash: `0x${string}`, logIndex: number) {
+async function getProof(
+  sourceClient: ReturnType<typeof getChainScopedClients>['client'],
+  txHash: `0x${string}`,
+  logIndex: number
+) {
   console.log('🔐 Fetching Merkle proof...');
   let proof: ProofNormalized | null = null;
   try {
-    proof = await client.zks.getL2ToL1LogProof(txHash, logIndex);
+    proof = await sourceClient.zks.getL2ToL1LogProof(txHash, logIndex);
     return proof;
   } catch (proofError) {
     console.log('proof error:', proofError);

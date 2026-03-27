@@ -312,8 +312,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="grid gap-8 px-6 py-6 sm:px-8 lg:grid-cols-[1.6fr_1fr]">
-              <div class="space-y-6">
+            <div class="px-6 py-6 sm:px-8">
+              <div class="mx-auto max-w-3xl space-y-6">
                 <div
                   v-if="showErrors && hasErrors"
                   class="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800"
@@ -360,9 +360,7 @@ onBeforeUnmount(() => {
                       {{ visibleError('recipient') }}
                     </p>
                   </label>
-                </div>
 
-                <div class="grid gap-4 md:grid-cols-2">
                   <label class="space-y-2">
                     <span class="text-xs font-bold uppercase tracking-widest text-slate-500">
                       Amount
@@ -382,6 +380,33 @@ onBeforeUnmount(() => {
                   </label>
 
                   <label class="space-y-2">
+                    <span class="text-xs font-bold uppercase tracking-widest text-slate-500">
+                      Token
+                    </span>
+                    <select
+                      v-model="form.billingTokenAddress"
+                      class="enterprise-input w-full rounded-2xl px-4 py-3"
+                      :class="visibleError('billingTokenAddress') ? 'border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-rose-100' : ''"
+                      @blur="markTouched('billingTokenAddress')"
+                    >
+                      <option disabled value="">Select token</option>
+                      <option
+                        v-for="token in invoiceTokenOptions"
+                        :key="`${token.address}-${token.chainId}`"
+                        :value="token.address"
+                      >
+                        {{ token.symbol }} - {{ token.address.slice(0, 8) }}...{{ token.address.slice(-6) }}
+                      </option>
+                    </select>
+                    <p
+                      v-if="visibleError('billingTokenAddress')"
+                      class="text-xs font-medium text-rose-600"
+                    >
+                      {{ visibleError('billingTokenAddress') }}
+                    </p>
+                  </label>
+
+                  <label class="space-y-2 md:col-span-2">
                     <span class="text-xs font-bold uppercase tracking-widest text-slate-500">
                       Destination chain
                     </span>
@@ -418,7 +443,7 @@ onBeforeUnmount(() => {
                     rows="5"
                     maxlength="280"
                     placeholder="Optional invoice description"
-                    class="enterprise-input w-full rounded-[24px] px-4 py-3"
+                    class="enterprise-input w-full rounded-2xl px-4 py-3"
                     :class="visibleError('text') ? 'border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-rose-100' : ''"
                     @blur="markTouched('text')"
                   ></textarea>
@@ -432,97 +457,6 @@ onBeforeUnmount(() => {
                   </div>
                 </label>
               </div>
-
-              <aside class="space-y-4 rounded-[28px] border border-slate-100 bg-slate-50/70 p-5">
-                <div class="flex items-center gap-3">
-                  <div
-                    class="flex h-11 w-11 items-center justify-center rounded-full bg-white border border-slate-100 text-slate-500 shadow-sm"
-                  >
-                    <BaseIcon name="ShieldCheckIcon" class="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p class="text-sm font-bold text-slate-900">Invoice settings</p>
-                    <p class="text-xs text-slate-500">Fixed refund addresses, dynamic token selection.</p>
-                  </div>
-                </div>
-
-                <div class="space-y-2">
-                  <span class="text-xs font-bold uppercase tracking-widest text-slate-500">
-                    Token
-                  </span>
-                  <select
-                    v-model="form.billingTokenAddress"
-                    class="enterprise-input w-full rounded-2xl px-4 py-3"
-                    :class="visibleError('billingTokenAddress') ? 'border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-rose-100' : ''"
-                    @blur="markTouched('billingTokenAddress')"
-                  >
-                    <option disabled value="">Select token</option>
-                    <option
-                      v-for="token in invoiceTokenOptions"
-                      :key="`${token.address}-${token.chainId}`"
-                      :value="token.address"
-                    >
-                      {{ token.label }} - {{ token.address.slice(0, 8) }}...{{ token.address.slice(-6) }}
-                    </option>
-                  </select>
-                  <p
-                    v-if="visibleError('billingTokenAddress')"
-                    class="text-xs font-medium text-rose-600"
-                  >
-                    {{ visibleError('billingTokenAddress') }}
-                  </p>
-                </div>
-
-                <div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="text-xs font-bold uppercase tracking-widest text-slate-400">
-                      Creator chain
-                    </span>
-                    <span class="text-sm font-semibold text-slate-900">
-                      {{ resolvedCreatorChainId }}
-                    </span>
-                  </div>
-                  <div class="flex items-center justify-between gap-3">
-                    <span class="text-xs font-bold uppercase tracking-widest text-slate-400">
-                      Refund addresses
-                    </span>
-                    <span class="text-xs font-medium text-slate-500 text-right">
-                      Forced to match creator and recipient
-                    </span>
-                  </div>
-                  <div v-if="selectedToken" class="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                    Selected token: <span class="font-mono font-semibold text-slate-900">{{ selectedToken.symbol }}</span>
-                    on chain {{ selectedToken.chainId }}
-                  </div>
-                  <div v-else class="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                    No deployed token is currently available in the frontend env.
-                  </div>
-                </div>
-
-                <div class="rounded-2xl border border-slate-200 bg-white p-4">
-                  <p class="text-xs font-bold uppercase tracking-widest text-slate-400">Payload preview</p>
-                  <dl class="mt-3 space-y-3 text-sm">
-                    <div class="flex items-start justify-between gap-4">
-                      <dt class="text-slate-500">Creator refund</dt>
-                      <dd class="max-w-[55%] break-all text-right font-mono text-slate-900">
-                        {{ form.creator || '—' }}
-                      </dd>
-                    </div>
-                    <div class="flex items-start justify-between gap-4">
-                      <dt class="text-slate-500">Recipient refund</dt>
-                      <dd class="max-w-[55%] break-all text-right font-mono text-slate-900">
-                        {{ form.recipient || '—' }}
-                      </dd>
-                    </div>
-                    <div class="flex items-start justify-between gap-4">
-                      <dt class="text-slate-500">Destination chain</dt>
-                      <dd class="max-w-[55%] break-all text-right font-mono text-slate-900">
-                        {{ selectedDestinationChain?.chainId ?? '—' }}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-              </aside>
             </div>
 
             <div class="flex flex-col-reverse gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-end sm:px-8">

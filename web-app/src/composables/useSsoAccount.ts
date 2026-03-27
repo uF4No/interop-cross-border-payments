@@ -30,8 +30,9 @@ export function useSsoAccount() {
       return;
     }
 
-    const isLinked = linkedWallets.includes(savedAccount.toLowerCase());
-    ssoAccount.value = isLinked ? savedAccount : linkedWalletAddress ?? savedAccount;
+    // Keep the explicitly selected passkey account authoritative. Falling back to the
+    // first profile wallet can silently switch the session to a different linked account.
+    ssoAccount.value = savedAccount;
   };
 
   onMounted(() => {

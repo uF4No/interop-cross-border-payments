@@ -1,4 +1,4 @@
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { usePrividium } from './usePrividium';
 import { useSsoAccount } from './useSsoAccount';
@@ -12,7 +12,10 @@ import type {
 } from '../types/invoices';
 
 const DEFAULT_VIEWS: InvoiceView[] = ['all', 'created', 'received'];
+const AUTO_REFRESH_INTERVAL_MS = 30_000;
+const MAX_AUTO_REFRESH_BACKOFF_MS = 5 * 60_000;
 const env = import.meta.env as Record<string, string | undefined>;
+type RefreshReason = 'auto' | 'dependency' | 'manual';
 
 type InvoiceTargetChainFilter = 'all' | number;
 
@@ -22,6 +25,55 @@ type InvoiceTargetChainOption = {
   label: string;
   count: number;
 };
+
+function areInvoiceArraysEqual(left: readonly InvoiceRecord[], right: readonly InvoiceRecord[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((leftInvoice, index) => {
+    const rightInvoice = right[index];
+    if (!rightInvoice) {
+      return false;
+    }
+
+    return (
+      leftInvoice.id === rightInvoice.id &&
+      leftInvoice.creator === rightInvoice.creator &&
+      leftInvoice.recipient === rightInvoice.recipient &&
+      leftInvoice.creatorRefundAddress === rightInvoice.creatorRefundAddress &&
+      leftInvoice.recipientRefundAddress === rightInvoice.recipientRefundAddress &&
+      leftInvoice.creatorChainId === rightInvoice.creatorChainId &&
+      leftInvoice.recipientChainId === rightInvoice.recipientChainId &&
+      leftInvoice.billingToken === rightInvoice.billingToken &&
+      leftInvoice.amount === rightInvoice.amount &&
+      leftInvoice.status === rightInvoice.status &&
+      leftInvoice.text === rightInvoice.text &&
+      leftInvoice.sourceTags.length === rightInvoice.sourceTags.length &&
+      leftInvoice.sourceTags.every((tag, tagIndex) => tag === rightInvoice.sourceTags[tagIndex])
+    );
+  });
+}
+
+function isRateLimitedResponse(response: Response) {
+  return response.status === 429;
+}
+
+function parseRetryAfterMs(response: Response) {
+  const retryAfterHeader = response.headers.get('retry-after');
+  const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : Number.NaN;
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : null;
+}
+
+function isRateLimitError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /\b429\b|too many requests|rate limit/i.test(error.message);
+}
 
 const readConfiguredChainId = (...keys: string[]) => {
   for (const key of keys) {
@@ -79,6 +131,8 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   const id = toStringValue(value.id);
   const creator = toStringValue(value.creator);
   const recipient = toStringValue(value.recipient);
+  const creatorRefundAddress = toStringValue(value.creatorRefundAddress);
+  const recipientRefundAddress = toStringValue(value.recipientRefundAddress);
   const billingToken = toStringValue(value.billingToken);
   const amount = toStringValue(value.amount);
   const status = toStringValue(value.status);
@@ -91,6 +145,8 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
     id &&
       creator &&
       recipient &&
+      creatorRefundAddress &&
+      recipientRefundAddress &&
       billingToken &&
       amount &&
       status &&
@@ -153,8 +209,14 @@ export function useInvoices() {
     received: 0
   });
   const isLoading = ref(false);
+  const isRefreshing = ref(false);
   const errorMessage = ref('');
   const loaded = ref(false);
+  const activeRefreshReason = ref<RefreshReason | null>(null);
+  const lastUpdatedAt = ref<number | null>(null);
+  let queuedRefreshReason: RefreshReason | null = null;
+  let autoRefreshTimer: number | null = null;
+  let nextAutoRefreshDelayMs = AUTO_REFRESH_INTERVAL_MS;
 
   const relationshipFilteredInvoices = computed(() => {
     if (selectedView.value === 'all') {
@@ -219,9 +281,62 @@ export function useInvoices() {
     selectedTargetChainId.value = chainId;
   };
 
-  const loadInvoices = async () => {
-    isLoading.value = true;
+  const scheduleQueuedRefresh = () => {
+    if (!queuedRefreshReason) {
+      return;
+    }
+
+    const nextReason = queuedRefreshReason;
+    queuedRefreshReason = null;
+    void runLoadInvoices(nextReason);
+  };
+
+  const clearAutoRefreshTimer = () => {
+    if (autoRefreshTimer !== null) {
+      window.clearTimeout(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
+  };
+
+  const scheduleAutoRefresh = () => {
+    clearAutoRefreshTimer();
+
+    autoRefreshTimer = window.setTimeout(() => {
+      if (document.hidden) {
+        scheduleAutoRefresh();
+        return;
+      }
+
+      void runLoadInvoices('auto');
+    }, nextAutoRefreshDelayMs);
+  };
+
+  const resetAutoRefreshDelay = () => {
+    nextAutoRefreshDelayMs = AUTO_REFRESH_INTERVAL_MS;
+  };
+
+  const increaseAutoRefreshDelay = (delayMs?: number | null) => {
+    if (delayMs && Number.isFinite(delayMs) && delayMs > 0) {
+      nextAutoRefreshDelayMs = Math.min(delayMs, MAX_AUTO_REFRESH_BACKOFF_MS);
+      return;
+    }
+
+    nextAutoRefreshDelayMs = Math.min(nextAutoRefreshDelayMs * 2, MAX_AUTO_REFRESH_BACKOFF_MS);
+  };
+
+  const runLoadInvoices = async (reason: RefreshReason) => {
+    if (isLoading.value || isRefreshing.value) {
+      queuedRefreshReason =
+        queuedRefreshReason === 'manual' || reason !== 'manual' ? queuedRefreshReason ?? reason : reason;
+      return;
+    }
+
+    const previousInvoices = allInvoices.value;
+    const shouldUseBackgroundRefresh = reason !== 'dependency' && previousInvoices.length > 0;
+    isLoading.value = !shouldUseBackgroundRefresh;
+    isRefreshing.value = shouldUseBackgroundRefresh;
     errorMessage.value = '';
+    activeRefreshReason.value = reason;
 
     try {
       const response = await fetch(getBackendUrl('/invoices'), {
@@ -239,6 +354,9 @@ export function useInvoices() {
       const payload: unknown = await response.json().catch(() => null);
 
       if (!response.ok) {
+        if (reason === 'auto' && isRateLimitedResponse(response)) {
+          increaseAutoRefreshDelay(parseRetryAfterMs(response));
+        }
         const serverMessage =
           isServiceResponse(payload) && typeof payload.message === 'string'
             ? payload.message
@@ -259,43 +377,52 @@ export function useInvoices() {
         throw new Error('Unexpected invoice payload.');
       }
 
-      allInvoices.value = responseObject.invoices;
-      availableViews.value =
-        responseObject.availableViews && responseObject.availableViews.length > 0
-          ? responseObject.availableViews
-          : [...DEFAULT_VIEWS];
-      countsByView.value = responseObject.countsByView ?? {
-        all: responseObject.invoices.length,
-        created: responseObject.invoices.filter((invoice) => invoice.sourceTags.includes('created'))
-          .length,
-        received: responseObject.invoices.filter((invoice) => invoice.sourceTags.includes('pending'))
-          .length
+      const relatedInvoices = responseObject.invoices.filter((invoice) => invoice.sourceTags.length > 0);
+      if (!areInvoiceArraysEqual(previousInvoices, relatedInvoices)) {
+        allInvoices.value = relatedInvoices;
+      }
+      availableViews.value = [...DEFAULT_VIEWS];
+      countsByView.value = {
+        all: relatedInvoices.length,
+        created: relatedInvoices.filter((invoice) => invoice.sourceTags.includes('created')).length,
+        received: relatedInvoices.filter((invoice) => invoice.sourceTags.includes('pending')).length
       };
       if (!availableViews.value.includes(selectedView.value)) {
         selectedView.value = 'all';
       }
       loaded.value = true;
+      lastUpdatedAt.value = Date.now();
+      resetAutoRefreshDelay();
     } catch (error) {
       errorMessage.value = formatFetchError(error);
-      allInvoices.value = [];
-      availableViews.value = [...DEFAULT_VIEWS];
-      countsByView.value = {
-        all: 0,
-        created: 0,
-        received: 0
-      };
       loaded.value = true;
+      if (reason === 'auto' && isRateLimitError(error)) {
+        increaseAutoRefreshDelay();
+      }
     } finally {
+      activeRefreshReason.value = null;
       isLoading.value = false;
+      isRefreshing.value = false;
+      scheduleQueuedRefresh();
+      if (reason === 'auto') {
+        scheduleAutoRefresh();
+      }
     }
   };
 
+  const loadInvoices = () => runLoadInvoices('manual');
+
   onMounted(() => {
-    void loadInvoices();
+    scheduleAutoRefresh();
+    void runLoadInvoices('dependency');
+  });
+
+  onBeforeUnmount(() => {
+    clearAutoRefreshTimer();
   });
 
   watch(account, () => {
-    void loadInvoices();
+    void runLoadInvoices('dependency');
   });
 
   watch(activeChainId, (chainId) => {
@@ -311,7 +438,16 @@ export function useInvoices() {
     hasInvoices,
     isEmpty,
     isLoading,
+    isRefreshing: computed(() => isRefreshing.value),
+    isManualRefreshing: computed(
+      () => activeRefreshReason.value === 'manual' && (isLoading.value || isRefreshing.value)
+    ),
+    isPolling: computed(
+      () => activeRefreshReason.value === 'auto' && (isLoading.value || isRefreshing.value)
+    ),
     invoices,
+    lastUpdatedAt: computed(() => lastUpdatedAt.value),
+    refreshIntervalMs: AUTO_REFRESH_INTERVAL_MS,
     selectedView,
     selectedTargetChainId,
     selectedTargetChainLabel,

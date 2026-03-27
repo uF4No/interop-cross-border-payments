@@ -9,8 +9,9 @@
           Cross-chain invoicing and settlement
         </h2>
         <p class="text-base leading-relaxed text-slate-500">
-          Invoice creation and payment submit real interop bundles from the active source chain to
-          the chain C <span class="font-semibold text-slate-700">InvoicePayment</span> contract.
+          Invoice creation submits real interop bundles to chain C. Invoice payment now bridges
+          funds from the active source chain into your chain C shadow account before settling on
+          <span class="font-semibold text-slate-700">InvoicePayment</span>.
         </p>
       </div>
 
@@ -22,6 +23,20 @@
             <p class="text-sm text-slate-500">
               Native {{ balanceRows[0]?.asset || 'ETH' }} and configured invoice tokens for the active source chain.
             </p>
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <span
+                class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500"
+              >
+                <span
+                  class="h-2 w-2 rounded-full"
+                  :class="isBalancesPolling ? 'bg-sky-500 animate-pulse' : 'bg-emerald-500'"
+                ></span>
+                Auto-refresh every {{ balancesAutoRefreshSeconds }}s
+              </span>
+              <span v-if="balancesLastUpdatedLabel" class="text-xs text-slate-400">
+                Last updated {{ balancesLastUpdatedLabel }}
+              </span>
+            </div>
           </div>
 
           <div class="flex flex-col items-start gap-3 md:items-end">
@@ -31,15 +46,15 @@
             <div class="flex flex-wrap gap-2">
               <button
                 class="enterprise-button-secondary h-11 px-4 py-0 text-sm"
-                :disabled="isBalancesLoading || !ssoAccount || isTokenFunding"
+                :disabled="isBalancesManualRefreshing || !ssoAccount || isTokenFunding"
                 @click="refreshBalances"
               >
                 <BaseIcon
                   name="ArrowPathIcon"
                   class="h-4 w-4"
-                  :class="isBalancesLoading ? 'animate-spin' : ''"
+                  :class="isBalancesManualRefreshing ? 'animate-spin' : ''"
                 />
-                {{ isBalancesLoading ? 'Refreshing' : 'Refresh balances' }}
+                {{ isBalancesManualRefreshing ? 'Refreshing' : 'Refresh balances' }}
               </button>
               <button
                 class="enterprise-button-primary h-11 px-4 py-0 text-sm"
@@ -51,7 +66,7 @@
                   class="h-4 w-4"
                   :class="isTokenFunding ? 'animate-pulse' : ''"
                 />
-                {{ isTokenFunding ? 'Funding tokens...' : 'Get test tokens' }}
+                {{ isTokenFunding ? 'Funding test funds...' : 'Get test funds' }}
               </button>
             </div>
           </div>
@@ -67,49 +82,59 @@
           </div>
 
           <div
-            v-if="balancesError"
-            class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
-          >
-            {{ balancesError }}
-          </div>
-
-          <div
-            v-else-if="!ssoAccount"
+            v-if="!ssoAccount"
             class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500"
           >
             Current wallet not linked.
           </div>
 
           <div
-            v-else-if="isBalancesLoading"
+            v-else-if="!hasBalanceRows && isBalancesLoading"
             class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500"
           >
             Loading balances for {{ sourceChainLabel }}.
           </div>
 
-          <div v-else class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-100">
-              <thead>
-                <tr class="text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                  <th class="pb-3 pr-4">Asset</th>
-                  <th class="pb-3 pr-4">Type</th>
-                  <th class="pb-3 pr-4">Balance</th>
-                  <th class="pb-3">Contract</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-100">
-                <tr v-for="row in balanceRows" :key="row.asset">
-                  <td class="py-3 pr-4 text-sm font-bold text-slate-900">{{ row.asset }}</td>
-                  <td class="py-3 pr-4 text-sm text-slate-500">
-                    {{ row.type === 'native' ? 'Native' : 'ERC-20' }}
-                  </td>
-                  <td class="py-3 pr-4 text-sm font-semibold text-slate-700">{{ row.balance }}</td>
-                  <td class="py-3 text-xs font-mono text-slate-500">
-                    {{ row.address ? truncateHash(row.address, 10, 8) : 'Native asset' }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div
+            v-else-if="balancesError && !hasBalanceRows"
+            class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            {{ balancesError }}
+          </div>
+
+          <div v-else class="space-y-4">
+            <div
+              v-if="balancesError && hasBalanceRows"
+              class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
+            >
+              Unable to refresh balances. Showing the last loaded snapshot.
+              <span class="mt-1 block" style="overflow-wrap:anywhere;">{{ balancesError }}</span>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-slate-100">
+                <thead>
+                  <tr class="text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                    <th class="pb-3 pr-4">Asset</th>
+                    <th class="pb-3 pr-4">Type</th>
+                    <th class="pb-3 pr-4">Balance</th>
+                    <th class="pb-3">Contract</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="row in balanceRows" :key="row.asset">
+                    <td class="py-3 pr-4 text-sm font-bold text-slate-900">{{ row.asset }}</td>
+                    <td class="py-3 pr-4 text-sm text-slate-500">
+                      {{ row.type === 'native' ? 'Native' : 'ERC-20' }}
+                    </td>
+                    <td class="py-3 pr-4 text-sm font-semibold text-slate-700">{{ row.balance }}</td>
+                    <td class="py-3 text-xs font-mono text-slate-500">
+                      {{ row.address ? truncateHash(row.address, 10, 8) : 'Native asset' }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -164,99 +189,8 @@
       </button>
     </div>
 
-    <div class="enterprise-card p-8 space-y-6">
-      <div class="flex items-center justify-between gap-4">
-        <div>
-          <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Interop Progress</p>
-          <h3 class="text-lg font-bold text-slate-900">Invoice Execution</h3>
-        </div>
-        <span
-          class="rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em]"
-          :class="interopStatusClass"
-        >
-          {{ interopStatusLabel }}
-        </span>
-      </div>
-
-      <p class="text-sm text-slate-500">
-        {{ interopMessage || 'Create or pay an invoice to start the cross-chain workflow.' }}
-      </p>
-
-      <div class="overflow-x-auto pb-2">
-        <div class="flex min-w-[980px] items-start">
-          <template v-for="(step, index) in interopSteps" :key="step.key">
-            <div class="flex min-w-0 flex-1 items-start">
-              <div class="flex min-w-[180px] flex-1 flex-col items-center text-center">
-                <div
-                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-xs font-black"
-                  :class="stepIconClass(step.key)"
-                >
-                  <BaseIcon
-                    v-if="stepState(step.key) === 'complete'"
-                    name="CheckIcon"
-                    class="w-4 h-4"
-                  />
-                  <BaseIcon
-                    v-else-if="stepState(step.key) === 'current'"
-                    name="ArrowPathIcon"
-                    class="w-4 h-4 animate-spin"
-                  />
-                  <BaseIcon
-                    v-else-if="stepState(step.key) === 'failed'"
-                    name="XMarkIcon"
-                    class="w-4 h-4"
-                  />
-                  <span v-else>{{ step.order }}</span>
-                </div>
-                <div
-                  class="mt-4 flex w-full flex-1 flex-col rounded-2xl border px-4 py-4 transition-colors"
-                  :class="stepCardClass(step.key)"
-                >
-                  <p class="text-sm font-bold text-slate-900">{{ step.label }}</p>
-                  <p class="mt-1 text-sm text-slate-500">{{ step.description }}</p>
-                </div>
-              </div>
-
-              <div
-                v-if="index < interopSteps.length - 1"
-                class="mx-4 mt-5 h-0.5 min-w-10 flex-1 rounded-full"
-                :class="stepConnectorClass(step.key)"
-              ></div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <div
-        v-if="interopSourceTxHash || interopBundleHash || interopInvoiceId"
-        class="space-y-3 rounded-3xl border border-slate-100 bg-slate-50 px-5 py-5"
-      >
-        <div v-if="interopSourceTxHash" class="flex items-center justify-between gap-4 text-xs">
-          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Source tx</span>
-          <span class="font-mono text-slate-600">{{ truncateHash(interopSourceTxHash) }}</span>
-        </div>
-        <div v-if="interopBundleHash" class="flex items-center justify-between gap-4 text-xs">
-          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Bundle</span>
-          <span class="font-mono text-slate-600">{{ truncateHash(interopBundleHash) }}</span>
-        </div>
-        <div v-if="interopInvoiceId" class="flex items-center justify-between gap-4 text-xs">
-          <span class="font-black uppercase tracking-[0.18em] text-slate-400">Invoice ID</span>
-          <span class="font-mono text-slate-600">{{ interopInvoiceId }}</span>
-        </div>
-      </div>
-
-      <div
-        v-if="interopError"
-        class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
-      >
-        {{ interopError }}
-      </div>
-    </div>
-
-    
-
     <InvoiceTableCard
-      :key="invoiceTableRefreshKey"
+      ref="invoiceTableCardRef"
       :active-chain-id="activeChainId"
       :is-interop-processing="isInvoiceProcessing"
       :processing-invoice-id="processingInvoiceId"
@@ -273,13 +207,13 @@
 
     <div class="enterprise-card overflow-hidden">
       <div class="px-8 py-6 border-b border-slate-100 flex items-center justify-between">
-        <h4 class="text-lg font-bold text-slate-900">Latest Activity</h4>
+        <h4 class="text-lg font-bold text-slate-900">Activity & Progress</h4>
         <span class="text-xs font-bold text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
           {{ transactions.length }} total
         </span>
       </div>
 
-      <div class="divide-y divide-slate-50 max-h-[400px] overflow-y-auto">
+      <div class="divide-y divide-slate-50 max-h-[720px] overflow-y-auto">
         <div v-if="transactions.length === 0" class="px-8 py-16 text-center">
           <BaseIcon name="InboxIcon" class="w-12 h-12 text-slate-200 mx-auto mb-4" />
           <p class="text-slate-400 text-sm font-medium">No recent transactions</p>
@@ -288,30 +222,128 @@
         <div
           v-for="tx in transactions"
           :key="tx.id"
-          class="px-8 py-5 flex items-center justify-between gap-6 hover:bg-slate-50/50 transition-colors"
+          class="px-8 py-5 hover:bg-slate-50/50 transition-colors"
         >
-          <div class="flex items-center gap-4 min-w-0">
-            <div
-              class="w-10 h-10 rounded-full flex items-center justify-center border shrink-0"
-              :class="{
-                'bg-green-50 border-green-100 text-green-600': tx.status === 'success',
-                'bg-amber-50 border-amber-100 text-amber-600': tx.status === 'pending',
-                'bg-red-50 border-red-100 text-red-600': tx.status === 'failed'
-              }"
-            >
-              <BaseIcon v-if="tx.status === 'success'" name="CheckIcon" class="w-5 h-5" />
-              <BaseIcon v-else-if="tx.status === 'pending'" name="ArrowPathIcon" class="w-5 h-5 animate-spin" />
-              <BaseIcon v-else name="XMarkIcon" class="w-5 h-5" />
+          <div class="flex items-start justify-between gap-6">
+            <div class="flex items-start gap-4 min-w-0">
+              <div
+                class="w-10 h-10 rounded-full flex items-center justify-center border shrink-0"
+                :class="{
+                  'bg-green-50 border-green-100 text-green-600': tx.status === 'success',
+                  'bg-amber-50 border-amber-100 text-amber-600': tx.status === 'pending',
+                  'bg-red-50 border-red-100 text-red-600': tx.status === 'failed'
+                }"
+              >
+                <BaseIcon v-if="tx.status === 'success'" name="CheckIcon" class="w-5 h-5" />
+                <BaseIcon v-else-if="tx.status === 'pending'" name="ArrowPathIcon" class="w-5 h-5 animate-spin" />
+                <BaseIcon v-else name="XMarkIcon" class="w-5 h-5" />
+              </div>
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h5 class="text-sm font-bold text-slate-900">{{ tx.function }}</h5>
+                  <span
+                    v-if="tx.interop"
+                    class="rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.18em]"
+                    :class="interopStatusBadgeClass(tx.interop.status)"
+                  >
+                    {{ interopStatusBadgeLabel(tx.interop.status) }}
+                  </span>
+                </div>
+                <p class="text-xs font-mono text-slate-400 mt-1">{{ tx.hash }}</p>
+                <p class="text-xs text-slate-500 mt-2 leading-relaxed" style="overflow-wrap:anywhere;">
+                  {{ tx.detail }}
+                </p>
+              </div>
             </div>
-            <div class="min-w-0">
-              <h5 class="text-sm font-bold text-slate-900">{{ tx.function }}</h5>
-              <p class="text-xs font-mono text-slate-400 mt-1">{{ tx.hash }}</p>
-              <p class="text-xs text-slate-500 mt-2 leading-relaxed" style="overflow-wrap:anywhere;">
-                {{ tx.detail }}
+            <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest shrink-0">{{ tx.timestamp }}</p>
+          </div>
+
+          <div
+            v-if="tx.interop"
+            class="ml-14 mt-4 space-y-4 rounded-3xl border border-slate-100 bg-slate-50 px-5 py-5"
+          >
+            <div class="space-y-1">
+              <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                {{ tx.interop.flow === 'pay' ? 'Invoice Payment Flow' : 'Invoice Creation Flow' }}
               </p>
+              <p class="text-sm text-slate-600">{{ tx.interop.message }}</p>
+              <p class="text-xs text-slate-400">{{ tx.interop.summary }}</p>
+            </div>
+
+            <div class="space-y-3">
+              <div
+                v-for="(step, index) in interopStepsForFlow(tx.interop.flow)"
+                :key="`${tx.id}-${step.id}`"
+                class="flex items-start gap-3"
+              >
+                <div
+                  class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-black"
+                  :class="activityStepIconClass(tx.interop, step.id)"
+                >
+                  <BaseIcon
+                    v-if="activityStepState(tx.interop, step.id) === 'complete'"
+                    name="CheckIcon"
+                    class="h-4 w-4"
+                  />
+                  <BaseIcon
+                    v-else-if="activityStepState(tx.interop, step.id) === 'current'"
+                    name="ArrowPathIcon"
+                    class="h-4 w-4 animate-spin"
+                  />
+                  <BaseIcon
+                    v-else-if="activityStepState(tx.interop, step.id) === 'failed'"
+                    name="XMarkIcon"
+                    class="h-4 w-4"
+                  />
+                  <span v-else>{{ index + 1 }}</span>
+                </div>
+
+                <div
+                  class="min-w-0 flex-1 rounded-2xl border px-4 py-3"
+                  :class="activityStepCardClass(tx.interop, step.id)"
+                >
+                  <p class="text-sm font-bold text-slate-900">{{ step.label }}</p>
+                  <p class="mt-1 text-xs leading-relaxed text-slate-500" style="overflow-wrap:anywhere;">
+                    {{ tx.interop.stepDetails[step.id] || step.description }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-if="tx.interop.sourceTxHash || tx.interop.bundleHash || tx.interop.invoiceId"
+              class="grid gap-2 md:grid-cols-3"
+            >
+              <div
+                v-if="tx.interop.sourceTxHash"
+                class="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-xs"
+              >
+                <span class="font-black uppercase tracking-[0.18em] text-slate-400">Source tx</span>
+                <p class="mt-1 font-mono text-slate-600">{{ truncateHash(tx.interop.sourceTxHash) }}</p>
+              </div>
+              <div
+                v-if="tx.interop.bundleHash"
+                class="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-xs"
+              >
+                <span class="font-black uppercase tracking-[0.18em] text-slate-400">Bundle</span>
+                <p class="mt-1 font-mono text-slate-600">{{ truncateHash(tx.interop.bundleHash) }}</p>
+              </div>
+              <div
+                v-if="tx.interop.invoiceId"
+                class="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-xs"
+              >
+                <span class="font-black uppercase tracking-[0.18em] text-slate-400">Invoice ID</span>
+                <p class="mt-1 font-mono text-slate-600">{{ tx.interop.invoiceId }}</p>
+              </div>
+            </div>
+
+            <div
+              v-if="tx.interop.error"
+              class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-800"
+            >
+              {{ tx.interop.error }}
             </div>
           </div>
-          <p class="text-[10px] font-bold text-slate-300 uppercase tracking-widest shrink-0">{{ tx.timestamp }}</p>
         </div>
       </div>
     </div>
@@ -319,8 +351,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { formatEther, formatUnits } from 'viem';
 import BaseIcon from '../components/BaseIcon.vue';
 import CreateInvoiceModal from '../components/CreateInvoiceModal.vue';
 import InvoiceTableCard from '../components/InvoiceTableCard.vue';
@@ -338,8 +371,37 @@ import type {
 } from '../types/invoices';
 
 type BannerTone = 'info' | 'success' | 'error';
-type InteropStepKey = 'validating' | 'authorizing' | 'submitting' | 'waiting' | 'success';
 type ActivityStatus = 'pending' | 'success' | 'failed';
+type InteropFlow = 'create' | 'pay';
+type InteropStatus = 'idle' | 'running' | 'failed' | 'success';
+type InteropStepId =
+  | 'create-validate'
+  | 'create-submit'
+  | 'create-relay'
+  | 'create-confirm'
+  | 'pay-validate'
+  | 'pay-prepare'
+  | 'pay-fund'
+  | 'pay-settle'
+  | 'pay-confirm';
+type InteropStepDefinition = {
+  id: InteropStepId;
+  label: string;
+  description: string;
+};
+type InteropStepState = 'upcoming' | 'current' | 'complete' | 'failed';
+type ActivityInteropEntry = {
+  flow: InteropFlow;
+  status: InteropStatus;
+  currentStepId: InteropStepId | null;
+  stepDetails: Partial<Record<InteropStepId, string>>;
+  message: string;
+  summary: string;
+  sourceTxHash: string;
+  bundleHash: string;
+  invoiceId: string;
+  error: string;
+};
 
 type ActivityEntry = {
   id: string;
@@ -348,6 +410,7 @@ type ActivityEntry = {
   hash: string;
   detail: string;
   timestamp: string;
+  interop?: ActivityInteropEntry;
 };
 
 type InvoiceDraftSummary = {
@@ -363,31 +426,95 @@ type InvoiceDraftSummary = {
 };
 
 type TokenFundingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+type InvoiceTableCardExposed = {
+  refreshInvoices: () => Promise<void>;
+};
 
-const INTEROP_PROGRESS_ORDER: InteropStepKey[] = [
-  'validating',
-  'authorizing',
-  'submitting',
-  'waiting',
-  'success'
-];
+const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+  {
+    id: 'create-validate',
+    label: 'Validate invoice',
+    description: 'Check invoice fields, source-chain context, and the configured chain C route.'
+  },
+  {
+    id: 'create-submit',
+    label: 'Send source bundle',
+    description: 'The creator smart account signs one user operation that calls source-chain InteropCenter.sendBundle(...).'
+  },
+  {
+    id: 'create-relay',
+    label: 'Finalize and relay',
+    description: 'Wait for L2 to L1 finalization and for the interop relay to execute createInvoice on chain C.'
+  },
+  {
+    id: 'create-confirm',
+    label: 'Confirm invoice on chain C',
+    description: 'Detect the new invoice on chain C. Creation moves no ERC20 tokens.'
+  }
+] as const;
+const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+  {
+    id: 'pay-validate',
+    label: 'Validate payment route',
+    description: 'Check invoice state, payer wallet ownership, and whether chain C settlement can proceed.'
+  },
+  {
+    id: 'pay-prepare',
+    label: 'Approve source vault',
+    description: 'Approve the source native token vault only if the payer wallet needs extra allowance before funding.'
+  },
+  {
+    id: 'pay-fund',
+    label: 'Fund payer shadow account',
+    description: 'Bridge the missing payment token amount into the deterministic chain C shadow account, or skip if already funded.'
+  },
+  {
+    id: 'pay-settle',
+    label: 'Approve and pay on chain C',
+    description: 'Send the settlement bundle that executes ERC20.approve(...) and InvoicePayment.payInvoice(...) from the payer shadow account.'
+  },
+  {
+    id: 'pay-confirm',
+    label: 'Confirm invoice paid',
+    description: 'Wait for chain C to mark the invoice paid. Any cross-chain creator payout happens later in the backend.'
+  }
+] as const;
 const INVOICE_POLL_INTERVAL_MS = 3000;
 const INVOICE_POLL_TIMEOUT_MS = 90000;
+const SHADOW_ACCOUNT_POLL_INTERVAL_MS = 3000;
+const SHADOW_ACCOUNT_POLL_TIMEOUT_MS = 90000;
 const FUND_TOKENS_POLL_INTERVAL_MS = 15000;
 const FUND_TOKENS_TIMEOUT_MS = 300000;
 const MAX_ERROR_MESSAGE_LENGTH = 220;
 
 const router = useRouter();
-const { isAuthenticated, getChain } = usePrividium();
+const { isAuthenticated, getChain, selectedChainKey } = usePrividium();
 const { account: ssoAccount } = useSsoAccount();
-const { sourceConfig, destinationConfig, sendCreateInvoiceBundle, sendPayInvoiceBundle } =
+const {
+  sourceConfig,
+  destinationConfig,
+  readDestinationTokenBalance,
+  readPayInvoicePreflight,
+  sendCreateInvoiceBundle,
+  sendFundPayInvoiceBundle,
+  sendSettlePayInvoiceBundle
+} =
   useInteropInvoice();
 const {
   rows: balanceRows,
   isLoading: isBalancesLoading,
+  isManualRefreshing: isBalancesManualRefreshing,
+  isPolling: isBalancesPolling,
+  lastUpdatedAt: balancesLastUpdatedAt,
+  refreshIntervalMs: balancesRefreshIntervalMs,
   error: balancesError,
   refresh: refreshBalances
 } = useActiveChainBalances();
+const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit'
+});
 
 const copied = ref(false);
 const isCreateInvoiceModalOpen = ref(false);
@@ -395,16 +522,18 @@ const createInvoiceBanner = ref('');
 const createInvoiceBannerTone = ref<BannerTone>('info');
 const lastInvoiceDraft = ref<InvoiceDraftSummary | null>(null);
 const transactions = ref<ActivityEntry[]>([]);
-const invoiceTableRefreshKey = ref(0);
+const invoiceTableCardRef = ref<InvoiceTableCardExposed | null>(null);
 const errorMessage = ref('');
-const interopStep = ref<'idle' | 'failed' | InteropStepKey>('idle');
+const interopFlow = ref<InteropFlow | null>(null);
+const interopStatus = ref<InteropStatus>('idle');
+const interopCurrentStepId = ref<InteropStepId | null>(null);
+const interopStepDetails = ref<Partial<Record<InteropStepId, string>>>({});
 const interopMessage = ref('');
 const interopError = ref('');
 const interopSourceTxHash = ref('');
 const interopBundleHash = ref('');
 const interopInvoiceId = ref('');
 const processingInvoiceId = ref('');
-const progressTimers = ref<number[]>([]);
 const isTokenFunding = ref(false);
 const tokenFundingNotice = ref('');
 const tokenFundingNoticeTone = ref<'info' | 'success' | 'error'>('info');
@@ -414,21 +543,17 @@ const sourceChainLabel = computed(() => `Chain ${sourceConfig.value.chainKey}`);
 const destinationChainId = computed(() => destinationConfig.value.chainId ?? null);
 const currentInteropCenterAddress = computed(() => sourceConfig.value.interopCenter ?? null);
 const destinationInvoicePaymentAddress = computed(() => destinationConfig.value.invoicePayment ?? null);
+const hasBalanceRows = computed(() => balanceRows.value.length > 0);
+const balancesAutoRefreshSeconds = Math.floor(balancesRefreshIntervalMs / 1000);
+const balancesLastUpdatedLabel = computed(() =>
+  balancesLastUpdatedAt.value ? timestampFormatter.format(new Date(balancesLastUpdatedAt.value)) : ''
+);
 const canOpenInvoiceModal = computed(
   () => Boolean(ssoAccount.value && currentInteropCenterAddress.value && destinationInvoicePaymentAddress.value)
 );
 const isInvoiceProcessing = computed(() =>
-  ['validating', 'authorizing', 'submitting', 'waiting'].includes(interopStep.value)
+  transactions.value.some((entry) => entry.status === 'pending' && Boolean(entry.interop))
 );
-const createInvoiceBannerClass = computed(() => {
-  if (createInvoiceBannerTone.value === 'success') {
-    return 'border-emerald-100 bg-emerald-50 text-emerald-800';
-  }
-  if (createInvoiceBannerTone.value === 'error') {
-    return 'border-red-100 bg-red-50 text-red-800';
-  }
-  return 'border-sky-100 bg-sky-50 text-sky-800';
-});
 const tokenFundingNoticeClass = computed(() => {
   if (tokenFundingNoticeTone.value === 'success') {
     return 'border-emerald-100 bg-emerald-50 text-emerald-800';
@@ -438,57 +563,6 @@ const tokenFundingNoticeClass = computed(() => {
   }
   return 'border-sky-100 bg-sky-50 text-sky-800';
 });
-const interopStatusLabel = computed(() => {
-  if (interopStep.value === 'idle') return 'Idle';
-  if (interopStep.value === 'failed') return 'Failed';
-  if (interopStep.value === 'success') return 'Success';
-  return 'Running';
-});
-const interopStatusClass = computed(() => {
-  if (interopStep.value === 'failed') {
-    return 'border-red-200 bg-red-50 text-red-700';
-  }
-  if (interopStep.value === 'success') {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  }
-  if (interopStep.value === 'idle') {
-    return 'border-slate-200 bg-slate-50 text-slate-500';
-  }
-  return 'border-amber-200 bg-amber-50 text-amber-700';
-});
-const interopSteps = [
-  {
-    key: 'validating' as const,
-    order: 1,
-    label: 'Validate request',
-    description: 'Check invoice state, allowed source chain, and chain C contract configuration.'
-  },
-  {
-    key: 'authorizing' as const,
-    order: 2,
-    label: 'Authorize passkey',
-    description: 'Request authenticated wallet permission for the source-chain interop call.'
-  },
-  {
-    key: 'submitting' as const,
-    order: 3,
-    label: 'Submit source tx',
-    description: 'Send the UserOperation that calls the current chain InteropCenter.'
-  },
-  {
-    key: 'waiting' as const,
-    order: 4,
-    label: 'Wait for chain C',
-    description: 'Poll for the resulting invoice state after the relay executes on chain C.'
-  },
-  {
-    key: 'success' as const,
-    order: 5,
-    label: 'Completed',
-    description: 'Invoice update confirmed and reflected in the dashboard table.'
-  }
-] as const;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
@@ -518,6 +592,8 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   const id = toStringValue(value.id);
   const creator = toStringValue(value.creator);
   const recipient = toStringValue(value.recipient);
+  const creatorRefundAddress = toStringValue(value.creatorRefundAddress);
+  const recipientRefundAddress = toStringValue(value.recipientRefundAddress);
   const billingToken = toStringValue(value.billingToken);
   const amount = toStringValue(value.amount);
   const status = toStringValue(value.status);
@@ -530,6 +606,8 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
     id &&
       creator &&
       recipient &&
+      creatorRefundAddress &&
+      recipientRefundAddress &&
       billingToken &&
       amount &&
       status &&
@@ -583,6 +661,14 @@ const formatTransactionError = (
 const truncateHash = (value: string, head = 10, tail = 8) =>
   value.length > head + tail + 3 ? `${value.slice(0, head)}...${value.slice(-tail)}` : value;
 
+const formatEthAmount = (value: bigint) => {
+  const [whole, fraction = ''] = formatEther(value).split('.');
+  const trimmedFraction = fraction.slice(0, 6).replace(/0+$/g, '');
+  return trimmedFraction ? `${whole}.${trimmedFraction}` : whole;
+};
+
+const formatTokenAmount = (value: bigint) => formatUnits(value, 18);
+
 const copyContractAddress = () => {
   if (!destinationInvoicePaymentAddress.value) {
     return;
@@ -595,72 +681,143 @@ const copyContractAddress = () => {
   }, 2000);
 };
 
-const clearProgressTimers = () => {
-  for (const timer of progressTimers.value) {
-    window.clearTimeout(timer);
+const interopStepsForFlow = (flow: InteropFlow) =>
+  flow === 'pay' ? PAY_INTEROP_STEPS : CREATE_INTEROP_STEPS;
+
+const interopSummaryForFlow = (flow: InteropFlow) => {
+  if (flow === 'pay') {
+    return 'Payment can require up to 3 user-signed transactions: source approval, funding bundle, and settlement bundle. Cross-chain creator payout is backend-driven and not tracked here.';
   }
-  progressTimers.value = [];
+
+  return 'Invoice creation uses 1 interop bundle from chain A or B to chain C and does not move ERC20 tokens.';
 };
 
-const scheduleSubmissionProgress = () => {
-  clearProgressTimers();
-  progressTimers.value.push(
-    window.setTimeout(() => {
-      if (interopStep.value === 'authorizing') {
-        interopStep.value = 'submitting';
-        interopMessage.value = 'Submitting the source-chain bundle.';
-      }
-    }, 1000)
-  );
-  progressTimers.value.push(
-    window.setTimeout(() => {
-      if (interopStep.value === 'authorizing' || interopStep.value === 'submitting') {
-        interopStep.value = 'waiting';
-        interopMessage.value = 'Waiting for the source chain to confirm the bundle.';
-      }
-    }, 3500)
-  );
+const interopStatusBadgeLabel = (status: InteropStatus) => {
+  if (status === 'idle') return 'Idle';
+  if (status === 'failed') return 'Failed';
+  if (status === 'success') return 'Success';
+  return 'Running';
 };
 
-const stepState = (key: InteropStepKey) => {
-  if (interopStep.value === 'idle') {
+const interopStatusBadgeClass = (status: InteropStatus) => {
+  if (status === 'failed') {
+    return 'border-red-200 bg-red-50 text-red-700';
+  }
+  if (status === 'success') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  }
+  if (status === 'idle') {
+    return 'border-slate-200 bg-slate-50 text-slate-500';
+  }
+  return 'border-amber-200 bg-amber-50 text-amber-700';
+};
+
+const setInteropStepDetail = (stepId: InteropStepId, detail: string) => {
+  interopStepDetails.value = {
+    ...interopStepDetails.value,
+    [stepId]: detail
+  };
+};
+
+const syncTransactionInterop = (id: string, flow = interopFlow.value) => {
+  if (!flow) return;
+
+  const tx = transactions.value.find((entry) => entry.id === id);
+  if (!tx) return;
+
+  tx.interop = {
+    flow,
+    status: interopStatus.value,
+    currentStepId: interopCurrentStepId.value,
+    stepDetails: { ...interopStepDetails.value },
+    message: interopMessage.value,
+    summary: interopSummaryForFlow(flow),
+    sourceTxHash: interopSourceTxHash.value,
+    bundleHash: interopBundleHash.value,
+    invoiceId: interopInvoiceId.value,
+    error: interopError.value
+  };
+};
+
+const setInteropProgress = (
+  flow: InteropFlow,
+  stepId: InteropStepId,
+  message: string,
+  detail?: string
+) => {
+  interopFlow.value = flow;
+  interopStatus.value = 'running';
+  interopCurrentStepId.value = stepId;
+  interopMessage.value = message;
+  if (detail) {
+    setInteropStepDetail(stepId, detail);
+  }
+};
+
+const completeInteropProgress = (
+  flow: InteropFlow,
+  finalStepId: InteropStepId,
+  message: string,
+  detail?: string
+) => {
+  interopFlow.value = flow;
+  interopStatus.value = 'success';
+  interopCurrentStepId.value = finalStepId;
+  interopMessage.value = message;
+  if (detail) {
+    setInteropStepDetail(finalStepId, detail);
+  }
+};
+
+const failInteropProgress = (message: string) => {
+  interopStatus.value = 'failed';
+  interopMessage.value = message;
+};
+
+const activityStepState = (interop: ActivityInteropEntry, key: InteropStepId): InteropStepState => {
+  if (interop.status === 'idle') {
     return 'upcoming';
   }
-  if (interopStep.value === 'failed') {
-    return INTEROP_PROGRESS_ORDER.indexOf(key) <= INTEROP_PROGRESS_ORDER.indexOf('waiting')
-      ? 'failed'
-      : 'upcoming';
+  const steps = interopStepsForFlow(interop.flow);
+  const currentIndex = steps.findIndex((step) => step.id === interop.currentStepId);
+  const stepIndex = steps.findIndex((step) => step.id === key);
+
+  if (stepIndex === -1) {
+    return 'upcoming';
+  }
+  if (interop.status === 'failed') {
+    if (currentIndex === -1) {
+      return 'failed';
+    }
+    if (stepIndex < currentIndex) return 'complete';
+    if (stepIndex === currentIndex) return 'failed';
+    return 'upcoming';
   }
 
-  const currentIndex = INTEROP_PROGRESS_ORDER.indexOf(interopStep.value);
-  const stepIndex = INTEROP_PROGRESS_ORDER.indexOf(key);
+  if (currentIndex === -1) {
+    return 'upcoming';
+  }
   if (stepIndex < currentIndex) return 'complete';
-  if (stepIndex === currentIndex) return interopStep.value === 'success' ? 'complete' : 'current';
+  if (stepIndex === currentIndex) {
+    return interop.status === 'success' ? 'complete' : 'current';
+  }
   return 'upcoming';
 };
 
-const stepCardClass = (key: InteropStepKey) => {
-  const state = stepState(key);
+const activityStepCardClass = (interop: ActivityInteropEntry, key: InteropStepId) => {
+  const state = activityStepState(interop, key);
   if (state === 'complete') return 'border-emerald-100 bg-emerald-50/70';
   if (state === 'current') return 'border-amber-200 bg-amber-50/70';
   if (state === 'failed') return 'border-red-100 bg-red-50/70';
   return 'border-slate-100 bg-white';
 };
 
-const stepIconClass = (key: InteropStepKey) => {
-  const state = stepState(key);
+const activityStepIconClass = (interop: ActivityInteropEntry, key: InteropStepId) => {
+  const state = activityStepState(interop, key);
   if (state === 'complete') return 'border-emerald-200 bg-emerald-100 text-emerald-700';
   if (state === 'current') return 'border-amber-200 bg-amber-100 text-amber-700';
   if (state === 'failed') return 'border-red-200 bg-red-100 text-red-700';
   return 'border-slate-200 bg-slate-50 text-slate-400';
-};
-
-const stepConnectorClass = (key: InteropStepKey) => {
-  const state = stepState(key);
-  if (state === 'complete') return 'bg-emerald-200';
-  if (state === 'current') return 'bg-amber-200';
-  if (state === 'failed') return 'bg-red-200';
-  return 'bg-slate-200';
 };
 
 const openCreateInvoiceModal = () => {
@@ -678,7 +835,7 @@ const handleCreateInvoiceCancel = () => {
 };
 
 const refreshInvoiceTable = () => {
-  invoiceTableRefreshKey.value += 1;
+  void invoiceTableCardRef.value?.refreshInvoices();
 };
 
 const listFailedTokens = (value: unknown): string[] => {
@@ -700,7 +857,7 @@ const fundTestTokens = async () => {
 
   isTokenFunding.value = true;
   tokenFundingNoticeTone.value = 'info';
-  tokenFundingNotice.value = `Requesting token funding on ${sourceChainLabel.value}.`;
+  tokenFundingNotice.value = `Requesting test funds on ${sourceChainLabel.value}.`;
 
   try {
     const response = await fetch(getBackendUrl('/fund-tokens'), {
@@ -709,7 +866,7 @@ const fundTestTokens = async () => {
         'Content-Type': 'application/json',
         Accept: 'application/json'
       },
-      body: JSON.stringify({ accountAddress: ssoAccount.value })
+      body: JSON.stringify({ chainKey: selectedChainKey.value, accountAddress: ssoAccount.value })
     });
 
     const payload: unknown = await response.json().catch(() => null);
@@ -746,7 +903,7 @@ const fundTestTokens = async () => {
 
     if (!jobId || (immediateStatus !== 'queued' && immediateStatus !== 'running')) {
       tokenFundingNoticeTone.value = 'success';
-      tokenFundingNotice.value = 'Test token funding completed.';
+      tokenFundingNotice.value = 'Test funds completed.';
       await refreshBalances();
       return;
     }
@@ -885,7 +1042,7 @@ const fetchInvoicesSnapshot = async (): Promise<InvoiceRecord[]> => {
     throw new Error('Unexpected invoice payload.');
   }
 
-  return payload.responseObject.invoices;
+  return payload.responseObject.invoices.filter((invoice) => invoice.sourceTags.length > 0);
 };
 
 const matchesSubmittedInvoice = (
@@ -964,14 +1121,55 @@ const waitForInvoiceStatus = async (invoiceId: string, targetStatus: string) => 
   throw new Error(`Timed out waiting for invoice ${invoiceId} to reach ${targetStatus}.`);
 };
 
+const waitForShadowAccountBalance = async (
+  token: `0x${string}`,
+  shadowAccount: `0x${string}`,
+  targetBalance: bigint
+) => {
+  const deadline = Date.now() + SHADOW_ACCOUNT_POLL_TIMEOUT_MS;
+  let lastReadError = '';
+
+  while (Date.now() < deadline) {
+    try {
+      const balance = await readDestinationTokenBalance({
+        token,
+        account: shadowAccount
+      });
+
+      if (balance >= targetBalance) {
+        return balance;
+      }
+    } catch (error) {
+      lastReadError = formatTransactionError(
+        error,
+        'Failed to read chain C shadow-account balance.'
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, SHADOW_ACCOUNT_POLL_INTERVAL_MS));
+  }
+
+  if (lastReadError) {
+    throw new Error(lastReadError);
+  }
+
+  throw new Error(`Timed out waiting for shadow account ${shadowAccount} to receive funds on chain C.`);
+};
+
 const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) => {
   errorMessage.value = '';
   interopError.value = '';
   processingInvoiceId.value = '';
   createInvoiceBannerTone.value = 'info';
   createInvoiceBanner.value = 'Validating invoice request before cross-chain submission.';
-  interopStep.value = 'validating';
-  interopMessage.value = 'Validating invoice payload and loading a baseline invoice snapshot.';
+  interopFlow.value = 'create';
+  interopStepDetails.value = {};
+  setInteropProgress(
+    'create',
+    'create-validate',
+    'Validating invoice payload and loading a baseline invoice snapshot.',
+    'Checking invoice fields, wallet context, and the configured chain C billing token before sending a single createInvoice bundle.'
+  );
   interopSourceTxHash.value = '';
   interopBundleHash.value = '';
   interopInvoiceId.value = '';
@@ -992,6 +1190,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     'Preparing bundle...',
     `Validating ${payload.billingTokenSymbol} invoice for chain C.`
   );
+  syncTransactionInterop(txId, 'create');
 
   let baselineIds = new Set<string>();
 
@@ -1003,23 +1202,39 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
       console.warn('Unable to load baseline invoice snapshot before submission:', baselineError);
     }
 
-    interopStep.value = 'authorizing';
-    interopMessage.value = 'Authorizing the source-chain InteropCenter call with your passkey.';
+    setInteropProgress(
+      'create',
+      'create-submit',
+      'Signing and submitting the source bundle that targets createInvoice on chain C.',
+      `Using your passkey to make the ${sourceChainLabel.value} smart account call InteropCenter.sendBundle(...).`
+    );
     createInvoiceBanner.value = `Authorizing ${sourceChainLabel.value} wallet access for the interop transaction.`;
     updateTransaction(txId, {
       hash: 'Authorizing passkey...',
       detail: `Authorizing ${sourceChainLabel.value} wallet session.`
     });
-    scheduleSubmissionProgress();
+    syncTransactionInterop(txId, 'create');
 
     const result = await sendCreateInvoiceBundle(payload);
 
-    clearProgressTimers();
-    interopStep.value = 'waiting';
-    interopMessage.value = 'Source transaction confirmed. Waiting for the chain C relay result.';
     interopSourceTxHash.value = result.transactionHash;
     interopBundleHash.value = result.bundleHash ?? '';
     createInvoiceBanner.value = 'Source transaction confirmed. Waiting for the invoice to appear on chain C.';
+    setInteropStepDetail(
+      'create-submit',
+      result.bundleHash
+        ? `Bundle ${truncateHash(result.bundleHash)} left ${sourceChainLabel.value} in source tx ${truncateHash(result.transactionHash)}.`
+        : `Source transaction ${truncateHash(result.transactionHash)} confirmed.`
+    );
+    setInteropProgress(
+      'create',
+      'create-relay',
+      'Source transaction confirmed. Waiting for L1 finalization and relay execution on chain C.',
+      result.bundleHash
+        ? `Bundle ${truncateHash(result.bundleHash)} was submitted. The backend relayer still needs to finalize the message and the interop relay still needs to execute it on chain C.`
+        : 'Waiting for relayer finalization and chain C execution.'
+    );
+    syncTransactionInterop(txId, 'create');
 
     lastInvoiceDraft.value = {
       ...(lastInvoiceDraft.value ?? {
@@ -1047,11 +1262,16 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
       baselineIds
     );
 
-    interopStep.value = 'success';
-    interopMessage.value = `Invoice ${createdInvoice.id} was created on chain C.`;
     interopInvoiceId.value = createdInvoice.id;
     createInvoiceBannerTone.value = 'success';
     createInvoiceBanner.value = `Invoice ${createdInvoice.id} created on chain C. Source tx ${truncateHash(result.transactionHash)}.`;
+    completeInteropProgress(
+      'create',
+      'create-confirm',
+      `Invoice ${createdInvoice.id} was created on chain C.`,
+      `Invoice ${createdInvoice.id} is now visible on chain C. No ERC20 transfer was needed for this flow.`
+    );
+    syncTransactionInterop(txId, 'create');
 
     lastInvoiceDraft.value = {
       ...(lastInvoiceDraft.value ?? {
@@ -1075,12 +1295,12 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     void refreshBalances();
     refreshInvoiceTable();
   } catch (error) {
-    clearProgressTimers();
-    interopStep.value = 'failed';
     interopError.value = formatTransactionError(error, 'Failed to create invoice on chain C.');
     errorMessage.value = interopError.value;
     createInvoiceBannerTone.value = 'error';
     createInvoiceBanner.value = interopError.value;
+    failInteropProgress(interopError.value);
+    syncTransactionInterop(txId, 'create');
 
     updateTransaction(txId, {
       status: 'failed',
@@ -1094,9 +1314,14 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
   errorMessage.value = '';
   interopError.value = '';
   processingInvoiceId.value = invoice.id;
-  interopStep.value = 'validating';
-  interopMessage.value =
-    'Validating invoice payment and checking that the active source chain matches the recipient chain.';
+  interopFlow.value = 'pay';
+  interopStepDetails.value = {};
+  setInteropProgress(
+    'pay',
+    'pay-validate',
+    'Validating invoice payment, source-chain funding path, and chain C settlement readiness.',
+    'Checking invoice state, recipient wallet ownership, and whether chain C can settle the invoice before any funds move.'
+  );
   interopSourceTxHash.value = '';
   interopBundleHash.value = '';
   interopInvoiceId.value = invoice.id;
@@ -1107,6 +1332,7 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     'Preparing bundle...',
     'Validating invoice payment for chain C.'
   );
+  syncTransactionInterop(txId, 'pay');
 
   try {
     if (invoice.status.trim().toLowerCase() !== 'created') {
@@ -1118,52 +1344,170 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
         `Invoice ${invoice.id} can only be paid from chain ${invoice.recipientChainId}. Switch to the recipient chain and retry.`
       );
     }
+    if (!invoice.sourceTags.includes('pending')) {
+      throw new Error(
+        `Invoice ${invoice.id} is not assigned to the connected wallet. Re-fetch invoices with the intended recipient account and retry.`
+      );
+    }
+    if (!ssoAccount.value) {
+      throw new Error('No SSO account is selected. Re-login and re-select the intended recipient account.');
+    }
+    if (ssoAccount.value.toLowerCase() !== invoice.recipientRefundAddress.toLowerCase()) {
+      throw new Error(
+        `Active account ${ssoAccount.value} does not match invoice recipient ${invoice.recipientRefundAddress}. Re-select the matching passkey account and retry.`
+      );
+    }
 
-    interopStep.value = 'authorizing';
-    interopMessage.value = 'Authorizing the source-chain InteropCenter call with your passkey.';
+    const paymentPreflight = await readPayInvoicePreflight({
+      creatorChainId: invoice.creatorChainId
+    });
+    if (
+      paymentPreflight.requiresCrossChainPayout &&
+      !paymentPreflight.hasSufficientInvoicePaymentBalance
+    ) {
+      throw new Error(
+        `InvoicePayment on chain C has ${formatEthAmount(paymentPreflight.invoicePaymentBalance)} ETH but needs at least ${formatEthAmount(paymentPreflight.crossChainFee)} ETH to forward billed funds to chain ${invoice.creatorChainId}. Top up the chain C invoice contract and retry.`
+      );
+    }
+
+    setInteropProgress(
+      'pay',
+      'pay-prepare',
+      'Preparing the source-side funding leg for the chain C payer shadow account.',
+      'Checking source-token allowance and signing an approval transaction only if the native token vault needs it.'
+    );
     updateTransaction(txId, {
       hash: 'Authorizing passkey...',
-      detail: `Authorizing ${sourceChainLabel.value} wallet session for invoice ${invoice.id}.`
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for invoice ${invoice.id}.`
     });
-    scheduleSubmissionProgress();
+    syncTransactionInterop(txId, 'pay');
 
-    const result = await sendPayInvoiceBundle({
+    const fundingResult = await sendFundPayInvoiceBundle({
       invoiceId: invoice.id,
-      paymentToken: invoice.billingToken as `0x${string}`
+      paymentAmount: invoice.amount,
+      paymentToken: invoice.billingToken as `0x${string}`,
+      payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
     });
 
-    clearProgressTimers();
-    interopStep.value = 'waiting';
-    interopMessage.value = 'Source transaction confirmed. Waiting for the invoice payment to finalize on chain C.';
-    interopSourceTxHash.value = result.transactionHash;
-    interopBundleHash.value = result.bundleHash ?? '';
+    interopSourceTxHash.value = fundingResult.transactionHash ?? '';
+    interopBundleHash.value = fundingResult.bundleHash ?? '';
+    setInteropStepDetail(
+      'pay-prepare',
+      fundingResult.approvalTransactionHash
+        ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed on ${sourceChainLabel.value}.`
+        : 'Existing allowance was sufficient, so no source-token approval transaction was needed.'
+    );
+    syncTransactionInterop(txId, 'pay');
+
+    if (fundingResult.requiredFundingAmount > 0n) {
+      setInteropProgress(
+        'pay',
+        'pay-fund',
+        `Funding bundle confirmed on ${sourceChainLabel.value}. Waiting for ${fundingResult.paymentTokenSymbol} to appear on payer shadow account ${truncateHash(fundingResult.shadowAccount)} on chain C.`,
+        fundingResult.bundleHash
+          ? `Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for relayer finalization and for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive funds on chain C.`
+          : `Waiting for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive ${fundingResult.paymentTokenSymbol} on chain C.`
+      );
+      updateTransaction(txId, {
+        hash: fundingResult.transactionHash || 'Funding submitted',
+        detail: fundingResult.bundleHash
+          ? `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for chain C shadow-account balance to increase.`
+          : `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Waiting for chain C shadow-account balance to increase.`
+      });
+      syncTransactionInterop(txId, 'pay');
+
+      await waitForShadowAccountBalance(
+        fundingResult.paymentToken,
+        fundingResult.shadowAccount,
+        fundingResult.destinationBalanceBeforeFunding + fundingResult.requiredFundingAmount
+      );
+      setInteropStepDetail(
+        'pay-fund',
+        `Shadow account ${truncateHash(fundingResult.shadowAccount)} now holds the required ${fundingResult.paymentTokenSymbol} on chain C.`
+      );
+      syncTransactionInterop(txId, 'pay');
+    } else {
+      setInteropProgress(
+        'pay',
+        'pay-fund',
+        `Payer shadow account ${truncateHash(fundingResult.shadowAccount)} already has enough ${fundingResult.paymentTokenSymbol} on chain C. Skipping the funding bundle.`,
+        `The payer shadow account already holds ${formatTokenAmount(fundingResult.destinationBalanceBeforeFunding)} ${fundingResult.paymentTokenSymbol} on chain C, so the funding leg was skipped.`
+      );
+      updateTransaction(txId, {
+        hash: fundingResult.approvalTransactionHash || 'Funding skipped',
+        detail: `Shadow account already holds ${formatTokenAmount(fundingResult.destinationBalanceBeforeFunding)} ${fundingResult.paymentTokenSymbol} on chain C, so no funding bridge was sent. Proceeding to settlement.`
+      });
+      syncTransactionInterop(txId, 'pay');
+    }
+
+    setInteropProgress(
+      'pay',
+      'pay-settle',
+      'Authorizing the settlement bundle that approves the destination token and calls payInvoice on chain C.',
+      'Signing the second interop stage so the payer shadow account can approve InvoicePayment and settle the invoice on chain C.'
+    );
+    interopSourceTxHash.value = '';
+    interopBundleHash.value = '';
+    updateTransaction(txId, {
+      hash: 'Authorizing settlement...',
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to approve the destination token and settle invoice ${invoice.id}.`
+    });
+    syncTransactionInterop(txId, 'pay');
+
+    const settlementResult = await sendSettlePayInvoiceBundle({
+      invoiceId: invoice.id,
+      paymentAmount: invoice.amount,
+      paymentToken: invoice.billingToken as `0x${string}`,
+      payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
+    });
+
+    interopSourceTxHash.value = settlementResult.transactionHash;
+    interopBundleHash.value = settlementResult.bundleHash ?? '';
+    setInteropStepDetail(
+      'pay-settle',
+      settlementResult.bundleHash
+        ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} left ${sourceChainLabel.value} in source tx ${truncateHash(settlementResult.transactionHash)}.`
+        : `Settlement transaction ${truncateHash(settlementResult.transactionHash)} confirmed.`
+    );
+    setInteropProgress(
+      'pay',
+      'pay-confirm',
+      'Settlement bundle confirmed. Waiting for invoice status to change to paid on chain C.',
+      `Waiting for invoice ${invoice.id} to be marked paid on chain C. If the creator lives on another chain, the later payout bridge is handled by the backend worker.`
+    );
+    syncTransactionInterop(txId, 'pay');
 
     updateTransaction(txId, {
-      hash: result.transactionHash,
-      detail: result.bundleHash
-        ? `Bundle ${truncateHash(result.bundleHash)} submitted. Waiting for invoice ${invoice.id} to be marked paid.`
-        : `Source transaction confirmed. Waiting for invoice ${invoice.id} to be marked paid.`
+      hash: settlementResult.transactionHash,
+      detail: settlementResult.bundleHash
+        ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for invoice ${invoice.id} to be marked paid.`
+        : `Settlement transaction confirmed. Waiting for invoice ${invoice.id} to be marked paid.`
     });
 
     const paidInvoice = await waitForInvoiceStatus(invoice.id, 'paid');
 
-    interopStep.value = 'success';
-    interopMessage.value = `Invoice ${paidInvoice.id} was paid on chain C.`;
     interopInvoiceId.value = paidInvoice.id;
+    completeInteropProgress(
+      'pay',
+      'pay-confirm',
+      `Invoice ${paidInvoice.id} was paid on chain C.`,
+      `Invoice ${paidInvoice.id} is now marked paid on chain C. Any creator payout to another chain will happen in the backend payout stage.`
+    );
+    syncTransactionInterop(txId, 'pay');
 
     updateTransaction(txId, {
       status: 'success',
-      hash: result.transactionHash,
+      hash: settlementResult.transactionHash,
       detail: `Invoice ${paidInvoice.id} marked paid on chain C.`
     });
 
     void refreshBalances();
     refreshInvoiceTable();
   } catch (error) {
-    clearProgressTimers();
-    interopStep.value = 'failed';
     interopError.value = formatTransactionError(error, `Failed to pay invoice ${invoice.id} on chain C.`);
     errorMessage.value = interopError.value;
+    failInteropProgress(interopError.value);
+    syncTransactionInterop(txId, 'pay');
 
     updateTransaction(txId, {
       status: 'failed',
@@ -1186,7 +1530,4 @@ onMounted(() => {
   }
 });
 
-onBeforeUnmount(() => {
-  clearProgressTimers();
-});
 </script>

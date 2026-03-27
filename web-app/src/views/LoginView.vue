@@ -3,7 +3,7 @@ import { type Address, type Chain, type Transport, createPublicClient } from 'vi
 import { ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BaseIcon from '../components/BaseIcon.vue';
-import { usePrividium } from '../composables/usePrividium';
+import { getPrividiumBranding, usePrividium } from '../composables/usePrividium';
 import { useRpcClient } from '../composables/useRpcClient';
 import { DEPLOY_ACCOUNT_ENDPOINT } from '../utils/sso/constants';
 import {
@@ -29,6 +29,8 @@ const {
   setSelectedChainKey
 } = usePrividium();
 const rpcClient = useRpcClient();
+const chainALabel = getPrividiumBranding('A').companyName;
+const chainBLabel = getPrividiumBranding('B').companyName;
 
 type UserWallet = { walletAddress: string };
 
@@ -106,6 +108,7 @@ const createPasskey = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        chainKey: selectedChainKey.value,
         userId,
         originDomain: window.location.origin,
         credentialId: creds.credentialId,
@@ -458,7 +461,7 @@ const resetSetup = () => {
                   isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
                 ]"
               >
-                Chain A
+                {{ chainALabel }}
               </button>
               <button
                 type="button"
@@ -470,7 +473,7 @@ const resetSetup = () => {
                   isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
                 ]"
               >
-                Chain B
+                {{ chainBLabel }}
               </button>
             </div>
             <p class="mt-2 text-xs text-slate-500">

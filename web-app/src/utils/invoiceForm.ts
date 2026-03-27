@@ -5,6 +5,7 @@ export type InvoiceChainKey = 'a' | 'b';
 export type InvoiceChainOption = {
   key: InvoiceChainKey;
   chainId: number;
+  companyName: string;
   label: string;
 };
 
@@ -45,26 +46,53 @@ const FALLBACK_CHAIN_IDS: Record<InvoiceChainKey, number> = {
 };
 
 const TOKEN_SYMBOLS = ['USDC', 'SGD', 'TBILL'] as const;
+const env = import.meta.env as Record<string, string | undefined>;
+
+function readEnv(key: string) {
+  return env[key]?.trim() || undefined;
+}
+
+function readFirstDefined(...keys: string[]) {
+  for (const key of keys) {
+    const value = readEnv(key);
+    if (value) return value;
+  }
+  return undefined;
+}
 
 const chainOptions: InvoiceChainOption[] = [
   {
     key: 'a',
     chainId: readChainId('VITE_CHAIN_A_CHAIN_ID', FALLBACK_CHAIN_IDS.a),
-    label: 'Chain A'
+    companyName: readChainCompanyName('a'),
+    label: `${readChainCompanyName('a')} Prividium`
   },
   {
     key: 'b',
     chainId: readChainId('VITE_CHAIN_B_CHAIN_ID', FALLBACK_CHAIN_IDS.b),
-    label: 'Chain B'
+    companyName: readChainCompanyName('b'),
+    label: `${readChainCompanyName('b')} Prividium`
   }
 ];
 
 const tokenOptions = buildTokenOptions();
 
 function readChainId(envKey: string, fallback: number): number {
-  const raw = import.meta.env[envKey];
+  const raw = env[envKey];
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readChainCompanyName(chainKey: InvoiceChainKey): string {
+  const suffix = chainKey.toUpperCase();
+  return (
+    readFirstDefined(
+      `VITE_PRIVIDIUM_CHAIN_${suffix}_COMPANY_NAME`,
+      `VITE_CHAIN_${suffix}_COMPANY_NAME`,
+      `VITE_COMPANY_${suffix}_NAME`,
+      'VITE_COMPANY_NAME'
+    ) ?? `Chain ${suffix}`
+  );
 }
 
 function readTokenAddress(symbol: (typeof TOKEN_SYMBOLS)[number], chainKey: InvoiceChainKey) {
@@ -108,7 +136,7 @@ function buildTokenOptions(): InvoiceTokenOption[] {
         address,
         chainKey: chain.key,
         chainId: chain.chainId,
-        label: `${symbol} - ${chain.label}`
+        label: `${symbol} - ${chain.companyName}`
       });
     }
   }
@@ -164,4 +192,3 @@ export function getTokenOptionByAddress(
   const normalized = address.toLowerCase();
   return tokenOptions.find((token) => token.address.toLowerCase() === normalized);
 }
-

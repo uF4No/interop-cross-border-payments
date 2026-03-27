@@ -10,6 +10,7 @@ import {
   createWalletClient,
   defineChain,
   encodeAbiParameters,
+  formatEther,
   getAddress,
   maxUint256,
   parseAbi,
@@ -120,6 +121,7 @@ type SetupThreeChainContractsArgs = {
   contractsDir: string;
   executorPrivateKey: `0x${string}`;
   adminAddress: Address;
+  invoiceInitialEthWei: bigint;
   nativeTokenVaultAddress: Address;
   interopCenterAddress: Address;
   chainA: ChainRuntimeConfig;
@@ -507,6 +509,39 @@ async function ensureInvoiceAdmin(
   await context.publicClient.waitForTransactionReceipt({ hash });
 }
 
+async function ensureInvoiceFunding(
+  context: ChainContext,
+  invoicePaymentAddress: Address,
+  targetBalanceWei: bigint
+): Promise<void> {
+  if (targetBalanceWei <= 0n) {
+    return;
+  }
+
+  const balanceBeforeWei = await context.publicClient.getBalance({
+    address: invoicePaymentAddress
+  });
+  if (balanceBeforeWei >= targetBalanceWei) {
+    return;
+  }
+
+  const topUpWei = targetBalanceWei - balanceBeforeWei;
+  const hash = await context.walletClient.sendTransaction({
+    account: walletAccount(context),
+    chain: undefined,
+    to: invoicePaymentAddress,
+    value: topUpWei
+  });
+  await context.publicClient.waitForTransactionReceipt({ hash });
+
+  const balanceAfterWei = await context.publicClient.getBalance({
+    address: invoicePaymentAddress
+  });
+  console.log(
+    `Funded InvoicePayment on chain ${context.label}: before=${formatEther(balanceBeforeWei)} ETH after=${formatEther(balanceAfterWei)} ETH topUp=${formatEther(topUpWei)} ETH tx=${hash}`
+  );
+}
+
 async function ensureInvoiceWhitelist(
   context: ChainContext,
   invoicePaymentAddress: Address,
@@ -602,6 +637,7 @@ export async function setupThreeChainContracts(
     contractLabel: 'InvoicePayment'
   });
   await ensureInvoiceAdmin(chainC, invoiceDeployment.address, args.adminAddress);
+  await ensureInvoiceFunding(chainC, invoiceDeployment.address, args.invoiceInitialEthWei);
 
   const chains: Record<ChainKey, ChainDeployment> = {
     a: {

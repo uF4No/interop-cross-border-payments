@@ -266,7 +266,7 @@ export async function submitUserOpDirectHandleOps(
   const relayQueued = Boolean(bundleHash) && receipt.status === 'success';
 
   if (relayQueued) {
-    addPendingTx(txHash, { action: 'Interop', amount: '0' }, packedUserOp.sender);
+    addPendingTx(txHash, { action: 'Interop', amount: '0' }, packedUserOp.sender, request.chainId);
   }
 
   return {

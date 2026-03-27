@@ -41,6 +41,7 @@ export const L2_CHAIN_ID = env.PRIVIDIUM_CHAIN_ID;
 export const TXNS_STATE_FOLDER = join(__dirname, 'txn-state');
 export const PENDING_TXS_FILE = join(TXNS_STATE_FOLDER, 'pending-txs.json');
 export const FINALIZED_TXS_FILE = join(TXNS_STATE_FOLDER, 'finalized-txs.json');
+export const INVOICE_PAYOUTS_FILE = join(TXNS_STATE_FOLDER, 'invoice-payouts.json');
 
 // ZKsync OS testnet chain info
 export const l2Chain = defineChain({

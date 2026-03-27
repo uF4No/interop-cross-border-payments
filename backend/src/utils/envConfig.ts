@@ -40,6 +40,18 @@ const envSchema = z.object({
   PRIVIDIUM_CHAIN_A_ID: optionalPositiveInt,
   PRIVIDIUM_CHAIN_B_ID: optionalPositiveInt,
   PRIVIDIUM_CHAIN_C_ID: optionalPositiveInt,
+  CHAIN_A_CHAIN_ID: optionalPositiveInt,
+  CHAIN_B_CHAIN_ID: optionalPositiveInt,
+  CHAIN_C_CHAIN_ID: optionalPositiveInt,
+  CHAIN_A_RPC_URL: optionalUrl,
+  CHAIN_B_RPC_URL: optionalUrl,
+  CHAIN_C_RPC_URL: optionalUrl,
+  CHAIN_A_API_URL: optionalUrl,
+  CHAIN_B_API_URL: optionalUrl,
+  CHAIN_C_API_URL: optionalUrl,
+  CHAIN_A_AUTH_BASE_URL: optionalUrl,
+  CHAIN_B_AUTH_BASE_URL: optionalUrl,
+  CHAIN_C_AUTH_BASE_URL: optionalUrl,
 
   L2_INTEROP_CENTER: z.preprocess(
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),

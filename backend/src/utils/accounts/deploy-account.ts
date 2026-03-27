@@ -27,6 +27,11 @@ import {
   type TokenKey
 } from '@/utils/contractsConfig';
 import { configureSmartAccountPermissions } from '@/utils/prividium/smart-account-permissions';
+import {
+  createChainRuntime,
+  type ChainRuntime,
+  type SelectedChainKey
+} from '@/utils/prividium/chainRuntime';
 import { associateWalletWithUser } from '@/utils/prividium/user-wallet-association';
 import { client, executorAccount, l2Wallet } from '../client';
 import { L2_CHAIN_ID, SSO_CONTRACTS } from '../constants';
@@ -119,9 +124,9 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resolveTokenAssetId(tokenKey: TokenKey): Hex | undefined {
+function resolveTokenAssetId(tokenKey: TokenKey, chainId = L2_CHAIN_ID): Hex | undefined {
   const activeChainAssetId =
-    getChainDeploymentById(contractsConfig, L2_CHAIN_ID)?.deployment.tokens?.[tokenKey]?.assetId;
+    getChainDeploymentById(contractsConfig, chainId)?.deployment.tokens?.[tokenKey]?.assetId;
   if (activeChainAssetId) {
     return activeChainAssetId;
   }
@@ -145,11 +150,11 @@ function resolveLegacyTokenAddress(tokenKey: TokenKey): Address | undefined {
   return undefined;
 }
 
-function resolveTokenAddress(tokenKey: TokenKey): {
+function resolveTokenAddress(tokenKey: TokenKey, chainId = L2_CHAIN_ID): {
   address?: Address;
   source: TokenMintResult['source'];
 } {
-  const configAddress = resolveTokenAddressFromConfig(contractsConfig, tokenKey, L2_CHAIN_ID);
+  const configAddress = resolveTokenAddressFromConfig(contractsConfig, tokenKey, chainId);
   if (configAddress) {
     return { address: configAddress, source: 'config' };
   }
@@ -267,7 +272,8 @@ function createAuthenticatedChainClients(context: ChainAuthContext, token: strin
 async function bridgeExecutorLiquidityFromChainC(
   tokenKey: TokenKey,
   activeTokenAddress: Address,
-  amount: bigint
+  amount: bigint,
+  runtime: ChainRuntime
 ): Promise<{ txHash?: Hex; error?: string }> {
   const tokenLabel = tokenKey.toUpperCase();
   if (amount <= 0n) {
@@ -285,14 +291,14 @@ async function bridgeExecutorLiquidityFromChainC(
     return { error: 'Chain C config is missing rpc/api/auth/interopCenter data' };
   }
 
-  const assetId = resolveTokenAssetId(tokenKey);
+  const assetId = resolveTokenAssetId(tokenKey, runtime.chainId);
   if (!assetId) {
     return { error: `Missing assetId for ${tokenLabel} in contracts config` };
   }
 
   try {
     console.log(
-      `[fund-tokens] ${tokenLabel}: bridging ${amount.toString()} units from chain C to active chain ${L2_CHAIN_ID}`
+      `[fund-tokens] ${tokenLabel}: bridging ${amount.toString()} units from chain C to active chain ${runtime.chainId}`
     );
     const authToken = await getChainAuthToken({
       chainId: Number(chainC.chainId),
@@ -310,17 +316,17 @@ async function bridgeExecutorLiquidityFromChainC(
       authToken
     );
 
-    const beforeBalance = (await client.l2.readContract({
+    const beforeBalance = (await runtime.publicClient.readContract({
       address: activeTokenAddress,
       abi: TOKEN_FUNDING_ABI,
       functionName: 'balanceOf',
-      args: [executorAccount.address],
-      account: executorAccount.address
+      args: [runtime.executorAccount.address],
+      account: runtime.executorAccount.address
     })) as bigint;
 
     const burnData = encodeAbiParameters(
       [{ type: 'uint256' }, { type: 'address' }, { type: 'address' }],
-      [amount, executorAccount.address, zeroAddress]
+      [amount, runtime.executorAccount.address, zeroAddress]
     );
     const payload = concatHex([
       NEW_ENCODING_VERSION,
@@ -333,13 +339,15 @@ async function bridgeExecutorLiquidityFromChainC(
         callAttributes: [indirectCallAttribute(0n)]
       }
     ] as const;
-    const bundleAttributes = [unbundlerAddressAttribute(executorAccount.address)] as const;
+    const bundleAttributes = [unbundlerAddressAttribute(runtime.executorAccount.address)] as const;
 
     const txHash = await chainCClients.walletClient.writeContract({
+      account: executorAccount,
+      chain: chainCClients.walletClient.chain ?? undefined,
       address: chainC.interopCenter,
       abi: INTEROP_CENTER_ABI,
       functionName: 'sendBundle',
-      args: [formatEvmV1(BigInt(L2_CHAIN_ID)), callStarters, bundleAttributes]
+      args: [formatEvmV1(BigInt(runtime.chainId)), callStarters, bundleAttributes]
     });
     console.log(`[fund-tokens] ${tokenLabel}: bridge bundle submitted tx=${txHash}`);
 
@@ -352,12 +360,12 @@ async function bridgeExecutorLiquidityFromChainC(
     const expectedBalance = beforeBalance + amount;
     const deadline = Date.now() + BRIDGE_WAIT_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const currentBalance = (await client.l2.readContract({
+      const currentBalance = (await runtime.publicClient.readContract({
         address: activeTokenAddress,
         abi: TOKEN_FUNDING_ABI,
         functionName: 'balanceOf',
-        args: [executorAccount.address],
-        account: executorAccount.address
+        args: [runtime.executorAccount.address],
+        account: runtime.executorAccount.address
       })) as bigint;
       if (currentBalance >= expectedBalance) {
         console.log(
@@ -370,7 +378,7 @@ async function bridgeExecutorLiquidityFromChainC(
 
     return {
       txHash,
-      error: `Bridge liquidity did not arrive on chain ${L2_CHAIN_ID} within ${BRIDGE_WAIT_TIMEOUT_MS / 1000}s`
+      error: `Bridge liquidity did not arrive on chain ${runtime.chainId} within ${BRIDGE_WAIT_TIMEOUT_MS / 1000}s`
     };
   } catch (error) {
     return {
@@ -379,10 +387,14 @@ async function bridgeExecutorLiquidityFromChainC(
   }
 }
 
-async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): Promise<TokenMintResult> {
+async function fundTokenToAccount(
+  tokenKey: TokenKey,
+  accountAddress: Address,
+  runtime: ChainRuntime
+): Promise<TokenMintResult> {
   const tokenLabel = tokenKey.toUpperCase();
   console.log(`[fund-tokens] ${tokenLabel}: resolving token address`);
-  const resolved = resolveTokenAddress(tokenKey);
+  const resolved = resolveTokenAddress(tokenKey, runtime.chainId);
   if (!resolved.address) {
     console.warn(`[fund-tokens] ${tokenLabel}: token address unavailable`);
     return {
@@ -393,7 +405,7 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
     };
   }
 
-  const bytecode = await client.l2.getBytecode({ address: resolved.address });
+  const bytecode = await runtime.publicClient.getBytecode({ address: resolved.address });
   if (!bytecode || bytecode === '0x') {
     console.warn(`[fund-tokens] ${tokenLabel}: no contract code at ${resolved.address}`);
     return {
@@ -407,11 +419,11 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
 
   try {
     const decimals = Number(
-      (await client.l2.readContract({
+      (await runtime.publicClient.readContract({
         address: resolved.address,
         abi: TOKEN_FUNDING_ABI,
         functionName: 'decimals',
-        account: executorAccount.address
+        account: runtime.executorAccount.address
       })) as number
     );
     const targetBalance = parseUnits(TOKEN_TARGET_BALANCE, decimals);
@@ -419,12 +431,12 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
       `[fund-tokens] ${tokenLabel}: token=${resolved.address} decimals=${decimals} target=${targetBalance.toString()} recipient=${accountAddress}`
     );
 
-    const recipientBalance = (await client.l2.readContract({
+    const recipientBalance = (await runtime.publicClient.readContract({
       address: resolved.address,
       abi: TOKEN_FUNDING_ABI,
       functionName: 'balanceOf',
       args: [accountAddress],
-      account: executorAccount.address
+      account: runtime.executorAccount.address
     })) as bigint;
     console.log(
       `[fund-tokens] ${tokenLabel}: recipient current balance=${recipientBalance.toString()}`
@@ -443,12 +455,12 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
 
     const amountNeeded = targetBalance - recipientBalance;
     let bridgeTxHash: Hex | undefined;
-    let executorBalance = (await client.l2.readContract({
+    let executorBalance = (await runtime.publicClient.readContract({
       address: resolved.address,
       abi: TOKEN_FUNDING_ABI,
       functionName: 'balanceOf',
-      args: [executorAccount.address],
-      account: executorAccount.address
+      args: [runtime.executorAccount.address],
+      account: runtime.executorAccount.address
     })) as bigint;
     console.log(`[fund-tokens] ${tokenLabel}: executor balance=${executorBalance.toString()}`);
 
@@ -459,7 +471,8 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
       const bridgeResult = await bridgeExecutorLiquidityFromChainC(
         tokenKey,
         resolved.address,
-        amountNeeded - executorBalance
+        amountNeeded - executorBalance,
+        runtime
       );
       bridgeTxHash = bridgeResult.txHash;
       if (bridgeResult.error) {
@@ -473,12 +486,12 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
         };
       }
 
-      executorBalance = (await client.l2.readContract({
+      executorBalance = (await runtime.publicClient.readContract({
         address: resolved.address,
         abi: TOKEN_FUNDING_ABI,
         functionName: 'balanceOf',
-        args: [executorAccount.address],
-        account: executorAccount.address
+        args: [runtime.executorAccount.address],
+        account: runtime.executorAccount.address
       })) as bigint;
       console.log(
         `[fund-tokens] ${tokenLabel}: executor balance after bridge=${executorBalance.toString()}`
@@ -499,14 +512,16 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
     console.log(
       `[fund-tokens] ${tokenLabel}: transferring ${amountNeeded.toString()} to ${accountAddress}`
     );
-    const txHash = await l2Wallet.writeContract({
+    const txHash = await (runtime.walletClient as any).writeContract({
+      account: runtime.executorAccount,
+      chain: runtime.walletClient.chain ?? undefined,
       address: resolved.address,
       abi: TOKEN_FUNDING_ABI,
       functionName: 'transfer',
       args: [accountAddress, amountNeeded]
     });
 
-    await client.l2.waitForTransactionReceipt({ hash: txHash });
+    await runtime.publicClient.waitForTransactionReceipt({ hash: txHash });
     console.log(`[fund-tokens] ${tokenLabel}: transfer confirmed tx=${txHash}`);
 
     return {
@@ -533,11 +548,14 @@ async function fundTokenToAccount(tokenKey: TokenKey, accountAddress: Address): 
   }
 }
 
-async function fundConfiguredTokens(accountAddress: Address): Promise<TokenMintResult[]> {
+async function fundConfiguredTokens(
+  accountAddress: Address,
+  runtime: ChainRuntime
+): Promise<TokenMintResult[]> {
   const results: TokenMintResult[] = [];
   for (const { key } of tokenSpecs) {
     console.log(`[fund-tokens] starting ${key.toUpperCase()} funding for ${accountAddress}`);
-    const result = await fundTokenToAccount(key, accountAddress);
+    const result = await fundTokenToAccount(key, accountAddress, runtime);
     results.push(result);
     console.log(
       `[fund-tokens] finished ${key.toUpperCase()} funding for ${accountAddress}: success=${result.minted}`
@@ -546,9 +564,9 @@ async function fundConfiguredTokens(accountAddress: Address): Promise<TokenMintR
   return results;
 }
 
-function deferredTokenFundingResults(): TokenMintResult[] {
+function deferredTokenFundingResults(chainId = L2_CHAIN_ID): TokenMintResult[] {
   return tokenSpecs.map(({ key }) => {
-    const resolved = resolveTokenAddress(key);
+    const resolved = resolveTokenAddress(key, chainId);
     return {
       token: key,
       tokenAddress: resolved.address,
@@ -559,11 +577,14 @@ function deferredTokenFundingResults(): TokenMintResult[] {
   });
 }
 
-export async function fundAccountTokens(accountAddress: Address) {
-  return fundConfiguredTokens(accountAddress);
+export async function fundAccountTokens(chainKey: SelectedChainKey, accountAddress: Address) {
+  const runtime = createChainRuntime(chainKey);
+  await sendFaucetFunds(accountAddress, runtime);
+  return fundConfiguredTokens(accountAddress, runtime);
 }
 
 export async function deploySmartAccount(
+  chainKey: SelectedChainKey,
   userId: string,
   originDomain: string,
   credentialId: Hex,
@@ -572,26 +593,34 @@ export async function deploySmartAccount(
 ) {
   console.log('🚀 Deploying smart account...');
   try {
+    const runtime = createChainRuntime(chainKey);
+    console.log(
+      `Using chain ${runtime.chainKey} for deploy-account: chainId=${runtime.chainId} rpc=${runtime.rpcUrl} api=${runtime.apiUrl}`
+    );
     // Intentionally stripped legacy code comments for brevity
 
     // Ensure factory is deployed/available before using it
-    await ensureFactoryDeployed();
+    await ensureFactoryDeployed(runtime);
 
     const deployedAddress = await deployAccountWithoutSDK(
       originDomain,
       credentialId,
-      credentialPublicKey
+      credentialPublicKey,
+      runtime
     );
     console.log('deployed Address:', deployedAddress);
 
-    await sendFaucetFunds(deployedAddress);
+    await sendFaucetFunds(deployedAddress, runtime);
     console.log('ℹ️ Skipping token funding during /deploy-account. Use /fund-tokens for on-demand token top-up.');
-    const tokenMintResults = deferredTokenFundingResults();
+    const tokenMintResults = deferredTokenFundingResults(runtime.chainId);
 
     let permissionsConfigured = false;
     let permissionsError: string | undefined;
     try {
-      await configureSmartAccountPermissions(deployedAddress);
+      await configureSmartAccountPermissions(deployedAddress, {
+        apiUrl: runtime.apiUrl,
+        authToken: await runtime.getAuthToken()
+      });
       permissionsConfigured = true;
       console.log(`✅ Configured contract permissions for smart account ${deployedAddress}`);
     } catch (error) {
@@ -604,7 +633,10 @@ export async function deploySmartAccount(
     let walletAddresses: string[] = [];
     if (permissionsConfigured) {
       try {
-        const association = await associateWalletWithUser(userId, deployedAddress);
+        const association = await associateWalletWithUser(userId, deployedAddress, {
+          apiUrl: runtime.apiUrl,
+          authToken: await runtime.getAuthToken()
+        });
         walletAssociated = true;
         walletAddresses = association.wallets;
         if (association.alreadyLinked) {
@@ -619,8 +651,10 @@ export async function deploySmartAccount(
     }
 
     return {
+      chainKey: runtime.chainKey,
+      chainId: runtime.chainId,
       accountAddress: deployedAddress,
-      webauthnValidator: SSO_CONTRACTS.webauthnValidator,
+      webauthnValidator: runtime.ssoContracts.webauthnValidator,
       tokenMintResults,
       permissionsConfigured,
       permissionsError,
@@ -637,7 +671,8 @@ export async function deploySmartAccount(
 async function deployAccountWithoutSDK(
   originDomain: string,
   credentialId: string,
-  credentialPublicKey: number[]
+  credentialPublicKey: number[],
+  runtime: ChainRuntime
 ) {
   const currentDir = __dirname;
 
@@ -703,8 +738,8 @@ async function deployAccountWithoutSDK(
     ) => string;
   };
 
-  const webauthnValidator = SSO_CONTRACTS.webauthnValidator as Hex;
-  const validatorCode = await client.l2.getBytecode({ address: webauthnValidator });
+  const webauthnValidator = runtime.ssoContracts.webauthnValidator as Hex;
+  const validatorCode = await runtime.publicClient.getBytecode({ address: webauthnValidator });
   if (!validatorCode || validatorCode === '0x') {
     throw new Error(
       `WebAuthn validator not deployed at ${webauthnValidator}. Run setup-permissions to deploy SSO contracts or set SSO_WEBAUTHN_VALIDATOR_CONTRACT.`
@@ -745,8 +780,10 @@ async function deployAccountWithoutSDK(
     console.log(
       `Calling factory.deployAccount (with WASM-encoded data). accountId=${id} originDomain=${origin}`
     );
-    return l2Wallet.sendTransaction({
-      to: getFactoryAddress(),
+    return (runtime.walletClient as any).sendTransaction({
+      account: runtime.executorAccount,
+      chain: runtime.walletClient.chain ?? undefined,
+      to: getFactoryAddress(runtime),
       data: data as Hex
     });
   };
@@ -756,7 +793,7 @@ async function deployAccountWithoutSDK(
   console.log(`Transaction hash: ${hash}`);
   console.log('Waiting for confirmation...');
 
-  const receipt = await client.l2.waitForTransactionReceipt({ hash });
+  const receipt = await runtime.publicClient.waitForTransactionReceipt({ hash });
 
   if (receipt.status !== 'success') {
     throw new Error('Account deployment transaction reverted');

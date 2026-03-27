@@ -5,6 +5,7 @@ import { StatusCodes } from 'http-status-codes';
 import { z } from 'zod';
 
 import { fundAccountTokens } from '@/utils/accounts/deploy-account';
+import type { SelectedChainKey } from '@/utils/prividium/chainRuntime';
 import { createApiResponse } from '@/utils/response/openAPIResponseBuilders';
 import { ServiceResponse } from '@/utils/response/serviceResponse';
 
@@ -12,6 +13,7 @@ type TokenFundingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 
 type TokenFundingJob = {
   id: string;
+  chainKey: SelectedChainKey;
   accountAddress: `0x${string}`;
   status: TokenFundingJobStatus;
   createdAt: string;
@@ -47,10 +49,14 @@ fundTokensRegistry.registerPath({
   }
 });
 
-function findActiveJobForAccount(accountAddress: string): TokenFundingJob | null {
+function findActiveJobForAccount(
+  accountAddress: string,
+  chainKey: SelectedChainKey
+): TokenFundingJob | null {
   const normalized = accountAddress.toLowerCase();
   for (const job of jobs.values()) {
     if (
+      job.chainKey === chainKey &&
       job.accountAddress.toLowerCase() === normalized &&
       (job.status === 'queued' || job.status === 'running')
     ) {
@@ -81,11 +87,11 @@ async function runTokenFundingWorker() {
       job.status = 'running';
       job.startedAt = new Date().toISOString();
       console.log(
-        `[fund-tokens] ▶️ job ${job.id} started for ${job.accountAddress} at ${job.startedAt}`
+        `[fund-tokens] ▶️ job ${job.id} started for ${job.accountAddress} on chain ${job.chainKey} at ${job.startedAt}`
       );
 
       try {
-        const tokenMintResults = await fundAccountTokens(job.accountAddress);
+        const tokenMintResults = await fundAccountTokens(job.chainKey, job.accountAddress);
         job.tokenMintResults = tokenMintResults;
 
         const failedCount = tokenMintResults.filter(
@@ -95,14 +101,14 @@ async function runTokenFundingWorker() {
         job.finishedAt = new Date().toISOString();
 
         console.log(
-          `[fund-tokens] ✅ job ${job.id} completed for ${job.accountAddress} with status=${job.status} failed=${failedCount}/${tokenMintResults.length}`
+          `[fund-tokens] ✅ job ${job.id} completed for ${job.accountAddress} on chain ${job.chainKey} with status=${job.status} failed=${failedCount}/${tokenMintResults.length}`
         );
       } catch (error) {
         job.status = 'failed';
         job.finishedAt = new Date().toISOString();
         job.error = error instanceof Error ? error.message : String(error);
         console.error(
-          `[fund-tokens] ❌ job ${job.id} failed for ${job.accountAddress}: ${job.error}`
+          `[fund-tokens] ❌ job ${job.id} failed for ${job.accountAddress} on chain ${job.chainKey}: ${job.error}`
         );
       }
     }
@@ -118,6 +124,7 @@ fundTokensRouter.post('/', async (req: Request, res: Response) => {
 
   let serviceResponse: ServiceResponse<unknown>;
   const BodySchema = z.object({
+    chainKey: z.enum(['A', 'B']),
     accountAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/)
   });
   const parsed = BodySchema.safeParse(args);
@@ -125,20 +132,23 @@ fundTokensRouter.post('/', async (req: Request, res: Response) => {
     serviceResponse = ServiceResponse.failure('Missing account address', null);
   } else {
     const accountAddress = parsed.data.accountAddress as `0x${string}`;
-    const existingJob = findActiveJobForAccount(accountAddress);
+    const chainKey = parsed.data.chainKey;
+    const existingJob = findActiveJobForAccount(accountAddress, chainKey);
     if (existingJob) {
       console.log(
-        `[fund-tokens] reusing existing job ${existingJob.id} for ${existingJob.accountAddress} (status=${existingJob.status})`
+        `[fund-tokens] reusing existing job ${existingJob.id} for ${existingJob.accountAddress} on chain ${existingJob.chainKey} (status=${existingJob.status})`
       );
       serviceResponse = ServiceResponse.success('Token funding already in progress.', {
         jobId: existingJob.id,
         status: existingJob.status,
+        chainKey: existingJob.chainKey,
         accountAddress: existingJob.accountAddress
       });
     } else {
       const jobId = randomUUID();
       const job: TokenFundingJob = {
         id: jobId,
+        chainKey,
         accountAddress,
         status: 'queued',
         createdAt: new Date().toISOString()
@@ -147,13 +157,14 @@ fundTokensRouter.post('/', async (req: Request, res: Response) => {
       queuedJobIds.push(job.id);
 
       console.log(
-        `[fund-tokens] enqueued job ${job.id} for ${job.accountAddress}. queue_length=${queuedJobIds.length}`
+        `[fund-tokens] enqueued job ${job.id} for ${job.accountAddress} on chain ${job.chainKey}. queue_length=${queuedJobIds.length}`
       );
       void runTokenFundingWorker();
 
       serviceResponse = ServiceResponse.success('Token funding queued.', {
         jobId: job.id,
         status: job.status,
+        chainKey: job.chainKey,
         accountAddress: job.accountAddress
       });
     }
