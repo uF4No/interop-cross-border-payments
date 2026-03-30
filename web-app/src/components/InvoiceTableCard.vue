@@ -4,7 +4,10 @@ import { formatUnits, getAddress, isAddress } from 'viem';
 
 import BaseIcon from './BaseIcon.vue';
 import { useInvoices } from '../composables/useInvoices';
-import type { InvoiceView } from '../types/invoices';
+import type {
+  InvoiceTableRelationshipFilter,
+  InvoiceTableStatusFilter
+} from '../types/invoices';
 import type { InvoiceRecord } from '../types/invoices';
 
 const props = defineProps<{
@@ -18,8 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const {
-  availableViews,
-  countsByView,
+  countsByFilter,
   errorMessage,
   hasInvoices,
   isEmpty,
@@ -29,13 +31,13 @@ const {
   invoices,
   lastUpdatedAt,
   loadInvoices,
+  relationshipFilters,
   refreshIntervalMs,
-  selectedTargetChainId,
-  selectedTargetChainLabel,
-  selectedView,
-  setSelectedTargetChainId,
-  setSelectedView,
-  targetChainOptions,
+  selectedRelationshipFilter,
+  selectedStatusFilter,
+  setSelectedRelationshipFilter,
+  setSelectedStatusFilter,
+  statusFilters,
   totalInvoices
 } = useInvoices();
 
@@ -46,10 +48,13 @@ const timestampFormatter = new Intl.DateTimeFormat(undefined, {
   second: '2-digit'
 });
 
-const viewLabels: Record<InvoiceView, string> = {
-  all: 'All',
-  created: 'Created by me',
-  received: 'Received by me'
+const relationshipFilterLabels: Record<InvoiceTableRelationshipFilter, string> = {
+  created: 'Created',
+  received: 'Received'
+};
+const statusFilterLabels: Record<InvoiceTableStatusFilter, string> = {
+  pending: 'Pending',
+  paid: 'Paid'
 };
 const autoRefreshSeconds = Math.floor(refreshIntervalMs / 1000);
 const lastUpdatedLabel = computed(() =>
@@ -59,24 +64,17 @@ const showInitialLoadingState = computed(() => isLoading.value && !lastUpdatedAt
 const showBlockingErrorState = computed(() => Boolean(errorMessage.value) && !lastUpdatedAt.value);
 const showInlineErrorNotice = computed(() => Boolean(errorMessage.value) && Boolean(lastUpdatedAt.value));
 
+const selectedRelationshipLabel = computed(
+  () => relationshipFilterLabels[selectedRelationshipFilter.value]
+);
+const selectedStatusLabel = computed(() => statusFilterLabels[selectedStatusFilter.value]);
+
 const emptyStateTitle = computed(() => {
-  if (selectedView.value === 'created') return 'No created invoices';
-  if (selectedView.value === 'received') return 'No received invoices';
-  return 'No invoices available';
+  return `No ${selectedRelationshipLabel.value.toLowerCase()} ${selectedStatusLabel.value.toLowerCase()} invoices`;
 });
 
-const targetScopeLabel = computed(() =>
-  selectedTargetChainId.value === 'all' ? 'all target chains' : selectedTargetChainLabel.value
-);
-
 const emptyStateDescription = computed(() => {
-  if (selectedView.value === 'created') {
-    return `The connected wallet has not created any invoices targeting ${targetScopeLabel.value}.`;
-  }
-  if (selectedView.value === 'received') {
-    return `The connected wallet is not the recipient for any invoices targeting ${targetScopeLabel.value}.`;
-  }
-  return `No invoices are currently available for ${targetScopeLabel.value}.`;
+  return `The connected wallet does not have any ${selectedRelationshipLabel.value.toLowerCase()} invoices with ${selectedStatusLabel.value.toLowerCase()} status.`;
 });
 
 const statusClassMap: Record<string, string> = {
@@ -137,6 +135,9 @@ const billingTokenSymbolByAddress = new Map<string, BillingTokenSymbol>(
 const getBillingTokenSymbol = (address: string) =>
   billingTokenSymbolByAddress.get(address.toLowerCase()) ?? 'TOKEN';
 
+const getPaymentTokenSymbol = (address: string | null) =>
+  address ? getBillingTokenSymbol(address) : 'TOKEN';
+
 const formatInvoiceAmount = (rawAmount: string): FormattedInvoiceAmount => {
   try {
     const full = formatUnits(BigInt(rawAmount), 18);
@@ -155,6 +156,48 @@ const formatInvoiceAmount = (rawAmount: string): FormattedInvoiceAmount => {
       fractionDisplay: fraction ? fraction.slice(0, 6) : '00',
       full: rawAmount
     };
+  }
+};
+
+const formatCondensedAmount = (rawAmount: string) => {
+  try {
+    const full = formatUnits(BigInt(rawAmount), 18);
+    const [whole, fraction = ''] = full.split('.');
+    const trimmedFraction = fraction.replace(/0+$/g, '').slice(0, 6);
+    return trimmedFraction ? `${addThousandsSeparators(whole || '0')}.${trimmedFraction}` : addThousandsSeparators(whole || '0');
+  } catch {
+    return rawAmount;
+  }
+};
+
+const hasSettlementDetails = (invoice: InvoiceRecord) =>
+  normalizeInvoiceStatus(invoice) === 'paid' && Boolean(invoice.paymentToken);
+
+const settlementSummary = (invoice: InvoiceRecord) => {
+  if (!hasSettlementDetails(invoice) || !invoice.paymentToken) {
+    return '';
+  }
+
+  return `${formatCondensedAmount(invoice.paymentAmount)} ${getPaymentTokenSymbol(invoice.paymentToken)}`;
+};
+
+const settlementFxRate = (invoice: InvoiceRecord) => {
+  if (!hasSettlementDetails(invoice) || !invoice.paymentToken) {
+    return '';
+  }
+
+  try {
+    const billingAmount = Number(formatUnits(BigInt(invoice.amount), 18));
+    const paymentAmount = Number(formatUnits(BigInt(invoice.paymentAmount), 18));
+    if (!Number.isFinite(billingAmount) || billingAmount <= 0 || !Number.isFinite(paymentAmount)) {
+      return '';
+    }
+
+    const rate = paymentAmount / billingAmount;
+    const formattedRate = rate >= 100 ? rate.toFixed(2) : rate >= 1 ? rate.toFixed(4) : rate.toFixed(6);
+    return `1 ${getBillingTokenSymbol(invoice.billingToken)} = ${formattedRate.replace(/\.?0+$/g, '')} ${getPaymentTokenSymbol(invoice.paymentToken)}`;
+  } catch {
+    return '';
   }
 };
 
@@ -261,58 +304,55 @@ defineExpose({
         </div>
         <div class="flex flex-wrap gap-2">
           <button
-            v-for="view in availableViews"
-            :key="view"
+            v-for="filter in relationshipFilters"
+            :key="filter"
             type="button"
-            @click="setSelectedView(view)"
+            @click="setSelectedRelationshipFilter(filter)"
             class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] transition-colors"
             :class="
-              selectedView === view
+              selectedRelationshipFilter === filter
                 ? 'border-slate-900 bg-slate-900 text-white'
                 : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
             "
           >
-            <span>{{ viewLabels[view] }}</span>
+            <span>{{ relationshipFilterLabels[filter] }}</span>
             <span
               class="rounded-full px-2 py-0.5 text-[10px]"
               :class="
-                selectedView === view ? 'bg-white/15 text-white' : 'bg-slate-100 text-slate-500'
+                selectedRelationshipFilter === filter
+                  ? 'bg-white/15 text-white'
+                  : 'bg-slate-100 text-slate-500'
               "
             >
-              {{ countsByView[view] ?? 0 }}
+              {{ countsByFilter[filter][selectedStatusFilter] ?? 0 }}
             </span>
           </button>
         </div>
-        <div class="space-y-2">
-          <p class="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-            Target chain
-          </p>
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="option in targetChainOptions"
-              :key="option.key"
-              type="button"
-              @click="setSelectedTargetChainId(option.value)"
-              class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] transition-colors"
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="filter in statusFilters"
+            :key="filter"
+            type="button"
+            @click="setSelectedStatusFilter(filter)"
+            class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] transition-colors"
+            :class="
+              selectedStatusFilter === filter
+                ? 'border-sky-700 bg-sky-700 text-white'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+            "
+          >
+            <span>{{ statusFilterLabels[filter] }}</span>
+            <span
+              class="rounded-full px-2 py-0.5 text-[10px]"
               :class="
-                selectedTargetChainId === option.value
-                  ? 'border-sky-700 bg-sky-700 text-white'
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900'
+                selectedStatusFilter === filter
+                  ? 'bg-white/15 text-white'
+                  : 'bg-slate-100 text-slate-500'
               "
             >
-              <span>{{ option.label }}</span>
-              <span
-                class="rounded-full px-2 py-0.5 text-[10px]"
-                :class="
-                  selectedTargetChainId === option.value
-                    ? 'bg-white/15 text-white'
-                    : 'bg-slate-100 text-slate-500'
-                "
-              >
-                {{ option.count }}
-              </span>
-            </button>
-          </div>
+              {{ countsByFilter[selectedRelationshipFilter][filter] ?? 0 }}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -427,6 +467,12 @@ defineExpose({
                 <span class="font-mono text-[11px] text-slate-500 whitespace-nowrap">
                   {{ formatCompactAddress(invoice.billingToken) }}
                 </span>
+                <span
+                  v-if="hasSettlementDetails(invoice)"
+                  class="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400"
+                >
+                  Paid with {{ getPaymentTokenSymbol(invoice.paymentToken) }}
+                </span>
               </div>
             </td>
             <td class="px-4 py-4">
@@ -437,15 +483,31 @@ defineExpose({
                 <span class="text-[11px] font-medium text-slate-400">
                   .{{ formatInvoiceAmount(invoice.amount).fractionDisplay }}
                 </span>
+                <span
+                  v-if="hasSettlementDetails(invoice)"
+                  class="text-[11px] font-medium text-slate-500"
+                  style="overflow-wrap:anywhere;"
+                >
+                  Paid {{ settlementSummary(invoice) }}
+                </span>
               </div>
             </td>
             <td class="px-4 py-4">
-              <span
-                class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.14em]"
-                :class="getStatusClass(invoice.status)"
-              >
-                {{ invoice.status }}
-              </span>
+              <div class="flex max-w-[220px] flex-col gap-1">
+                <span
+                  class="inline-flex w-fit items-center rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.14em]"
+                  :class="getStatusClass(invoice.status)"
+                >
+                  {{ invoice.status }}
+                </span>
+                <span
+                  v-if="hasSettlementDetails(invoice)"
+                  class="text-[11px] text-slate-500"
+                  style="overflow-wrap:anywhere;"
+                >
+                  FX {{ settlementFxRate(invoice) }}
+                </span>
+              </div>
             </td>
             <td class="px-4 py-4">
               <span class="text-sm font-semibold text-slate-700 tabular-nums">{{ invoice.creatorChainId }}</span>
@@ -454,7 +516,7 @@ defineExpose({
               <span class="text-sm font-semibold text-slate-700 tabular-nums">{{ invoice.recipientChainId }}</span>
             </td>
             <td class="px-4 py-4">
-              <p class="max-w-[320px] text-sm text-slate-600 leading-relaxed" :title="invoice.text">
+              <p class="max-w-[320px] text-sm text-slate-600 leading-relaxed" :title="invoice.text" style="overflow-wrap:anywhere;">
                 {{ invoice.text }}
               </p>
             </td>

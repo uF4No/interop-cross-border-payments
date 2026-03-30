@@ -1,5 +1,7 @@
 export type InvoiceSourceTag = 'created' | 'pending';
 export type InvoiceView = 'all' | 'created' | 'received';
+export type InvoiceTableRelationshipFilter = 'created' | 'received';
+export type InvoiceTableStatusFilter = 'pending' | 'paid';
 
 export type BackendServiceResponse<T> = {
   success: boolean;
@@ -39,9 +41,31 @@ export type InvoiceRecord = {
   recipientRefundAddress: string;
   billingToken: string;
   amount: string;
+  paymentToken: string | null;
+  paymentAmount: string;
   status: string;
   creatorChainId: number;
   recipientChainId: number;
+  paidAt?: string | null;
   text: string;
   sourceTags: InvoiceSourceTag[];
+};
+
+export type InvoicePaymentOption = {
+  token: string;
+  symbol: 'USDC' | 'SGD' | 'TBILL' | string;
+  paymentAmount: string;
+  isBillingToken: boolean;
+};
+
+export type InvoicePaymentOptionsResponseObject = {
+  invoiceId: string;
+  status: string;
+  billingToken: string;
+  billingTokenSymbol: 'USDC' | 'SGD' | 'TBILL' | string;
+  billingAmount: string;
+  options: InvoicePaymentOption[];
+  quoteType: 'exact';
+  invoicePaymentBillingTokenBalance: string;
+  hasSufficientBillingLiquidity: boolean;
 };

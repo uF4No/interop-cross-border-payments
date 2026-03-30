@@ -48,5 +48,4 @@
 - [x] when switching between chain A and B in login view, we should update the accent color, company name etc from the env file using the correspondent values from chain A or B. THIS IS UNCOMPLETED, we have VITE_COMPANY_A_* and VITE_COMPANY_B_* variables which should be used.
 - [x] BUG: when there's an error in the app (like querying the invoices or a network issue) the logout button disapears from the navbar. Make sure errors do not affect visibility of this component/button.
 - [x] In the MainView, we should display the current user token balances at the top, in a table view.
-- [ ] Make web-app able to show all invoices and current user invoices (filter by current wallet).
-- [ ] Change steper to track progress of interop transactions horizontal
+- [ ] Amount in the invoices table is not formatted properly and it shows the full amount without any decimal delimiter. Make it more human readable.

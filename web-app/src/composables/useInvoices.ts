@@ -1,6 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { usePrividium } from './usePrividium';
 import { useSsoAccount } from './useSsoAccount';
 import { getBackendUrl } from '../utils/backend';
 import type {
@@ -8,23 +7,16 @@ import type {
   InvoiceRecord,
   InvoiceResponseObject,
   InvoiceSourceTag,
+  InvoiceTableRelationshipFilter,
+  InvoiceTableStatusFilter,
   InvoiceView
 } from '../types/invoices';
 
-const DEFAULT_VIEWS: InvoiceView[] = ['all', 'created', 'received'];
-const AUTO_REFRESH_INTERVAL_MS = 30_000;
+const RELATIONSHIP_FILTERS: InvoiceTableRelationshipFilter[] = ['created', 'received'];
+const STATUS_FILTERS: InvoiceTableStatusFilter[] = ['pending', 'paid'];
+const AUTO_REFRESH_INTERVAL_MS = 120_000;
 const MAX_AUTO_REFRESH_BACKOFF_MS = 5 * 60_000;
-const env = import.meta.env as Record<string, string | undefined>;
 type RefreshReason = 'auto' | 'dependency' | 'manual';
-
-type InvoiceTargetChainFilter = 'all' | number;
-
-type InvoiceTargetChainOption = {
-  key: string;
-  value: InvoiceTargetChainFilter;
-  label: string;
-  count: number;
-};
 
 function areInvoiceArraysEqual(left: readonly InvoiceRecord[], right: readonly InvoiceRecord[]) {
   if (left.length !== right.length) {
@@ -47,7 +39,10 @@ function areInvoiceArraysEqual(left: readonly InvoiceRecord[], right: readonly I
       leftInvoice.recipientChainId === rightInvoice.recipientChainId &&
       leftInvoice.billingToken === rightInvoice.billingToken &&
       leftInvoice.amount === rightInvoice.amount &&
+      leftInvoice.paymentToken === rightInvoice.paymentToken &&
+      leftInvoice.paymentAmount === rightInvoice.paymentAmount &&
       leftInvoice.status === rightInvoice.status &&
+      leftInvoice.paidAt === rightInvoice.paidAt &&
       leftInvoice.text === rightInvoice.text &&
       leftInvoice.sourceTags.length === rightInvoice.sourceTags.length &&
       leftInvoice.sourceTags.every((tag, tagIndex) => tag === rightInvoice.sourceTags[tagIndex])
@@ -74,30 +69,6 @@ function isRateLimitError(error: unknown) {
 
   return /\b429\b|too many requests|rate limit/i.test(error.message);
 }
-
-const readConfiguredChainId = (...keys: string[]) => {
-  for (const key of keys) {
-    const value = env[key]?.trim();
-    if (!value) continue;
-
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-
-  return null;
-};
-
-const configuredChainLabels = new Map<number, string>(
-  [
-    [readConfiguredChainId('VITE_CHAIN_A_CHAIN_ID', 'VITE_PRIVIDIUM_CHAIN_A_ID'), 'Chain A'],
-    [readConfiguredChainId('VITE_CHAIN_B_CHAIN_ID', 'VITE_PRIVIDIUM_CHAIN_B_ID'), 'Chain B']
-  ].filter((entry): entry is [number, string] => entry[0] !== null)
-);
-
-const formatTargetChainLabel = (chainId: number) =>
-  configuredChainLabels.get(chainId) ?? `Chain ${chainId}`;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -135,9 +106,12 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   const recipientRefundAddress = toStringValue(value.recipientRefundAddress);
   const billingToken = toStringValue(value.billingToken);
   const amount = toStringValue(value.amount);
+  const paymentToken = value.paymentToken;
+  const paymentAmount = toStringValue(value.paymentAmount);
   const status = toStringValue(value.status);
   const creatorChainId = toNumberValue(value.creatorChainId);
   const recipientChainId = toNumberValue(value.recipientChainId);
+  const paidAt = value.paidAt;
   const text = toStringValue(value.text);
   const sourceTags = value.sourceTags;
 
@@ -149,9 +123,12 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
       recipientRefundAddress &&
       billingToken &&
       amount &&
+      (paymentToken === null || paymentToken === undefined || typeof paymentToken === 'string') &&
+      paymentAmount &&
       status &&
       creatorChainId !== null &&
       recipientChainId !== null &&
+      (paidAt === null || paidAt === undefined || typeof paidAt === 'string') &&
       text !== null &&
       Array.isArray(sourceTags) &&
       sourceTags.every(isInvoiceSourceTag)
@@ -169,7 +146,7 @@ const isInvoiceResponseObject = (value: unknown): value is InvoiceResponseObject
   }
   if (value.countsByView !== undefined) {
     if (!isRecord(value.countsByView)) return false;
-    for (const view of DEFAULT_VIEWS) {
+    for (const view of ['all', 'created', 'received'] as const) {
       if (typeof value.countsByView[view] !== 'number') {
         return false;
       }
@@ -196,18 +173,10 @@ const formatFetchError = (error: unknown): string => {
 };
 
 export function useInvoices() {
-  const { getChain } = usePrividium();
   const { account } = useSsoAccount();
   const allInvoices = ref<InvoiceRecord[]>([]);
-  const availableViews = ref<InvoiceView[]>([...DEFAULT_VIEWS]);
-  const selectedView = ref<InvoiceView>('all');
-  const activeChainId = computed(() => Number(getChain().id));
-  const selectedTargetChainId = ref<InvoiceTargetChainFilter>(activeChainId.value);
-  const countsByView = ref<Record<InvoiceView, number>>({
-    all: 0,
-    created: 0,
-    received: 0
-  });
+  const selectedRelationshipFilter = ref<InvoiceTableRelationshipFilter>('created');
+  const selectedStatusFilter = ref<InvoiceTableStatusFilter>('pending');
   const isLoading = ref(false);
   const isRefreshing = ref(false);
   const errorMessage = ref('');
@@ -218,67 +187,70 @@ export function useInvoices() {
   let autoRefreshTimer: number | null = null;
   let nextAutoRefreshDelayMs = AUTO_REFRESH_INTERVAL_MS;
 
-  const relationshipFilteredInvoices = computed(() => {
-    if (selectedView.value === 'all') {
-      return allInvoices.value;
-    }
+  const relationshipFilters = computed(() => RELATIONSHIP_FILTERS);
+  const statusFilters = computed(() => STATUS_FILTERS);
 
-    const sourceTag: InvoiceSourceTag = selectedView.value === 'created' ? 'created' : 'pending';
-    return allInvoices.value.filter((invoice) => invoice.sourceTags.includes(sourceTag));
-  });
-  const targetChainOptions = computed<InvoiceTargetChainOption[]>(() => {
-    const counts = new Map<number, number>();
-    for (const invoice of relationshipFilteredInvoices.value) {
-      counts.set(invoice.recipientChainId, (counts.get(invoice.recipientChainId) ?? 0) + 1);
-    }
+  const matchesRelationshipFilter = (
+    invoice: InvoiceRecord,
+    relationshipFilter: InvoiceTableRelationshipFilter
+  ) =>
+    relationshipFilter === 'created'
+      ? invoice.sourceTags.includes('created')
+      : invoice.sourceTags.includes('pending');
 
-    const chainIds = new Set<number>(counts.keys());
-    if (Number.isFinite(activeChainId.value) && activeChainId.value > 0) {
-      chainIds.add(activeChainId.value);
-    }
+  const matchesStatusFilter = (invoice: InvoiceRecord, statusFilter: InvoiceTableStatusFilter) => {
+    const normalizedStatus = invoice.status.trim().toLowerCase();
+    return statusFilter === 'pending' ? normalizedStatus === 'created' : normalizedStatus === 'paid';
+  };
 
-    return [
-      {
-        key: 'all',
-        value: 'all',
-        label: 'All targets',
-        count: relationshipFilteredInvoices.value.length
+  const countsByFilter = computed<
+    Record<InvoiceTableRelationshipFilter, Record<InvoiceTableStatusFilter, number>>
+  >(() => {
+    const counts = {
+      created: {
+        pending: 0,
+        paid: 0
       },
-      ...[...chainIds]
-        .sort((left, right) => left - right)
-        .map((chainId) => ({
-          key: String(chainId),
-          value: chainId,
-          label: formatTargetChainLabel(chainId),
-          count: counts.get(chainId) ?? 0
-        }))
-    ];
-  });
-  const selectedTargetChainLabel = computed(() => {
-    const selectedOption = targetChainOptions.value.find(
-      (option) => option.value === selectedTargetChainId.value
-    );
-    return selectedOption?.label ?? 'Selected target';
-  });
-  const invoices = computed(() => {
-    if (selectedTargetChainId.value === 'all') {
-      return relationshipFilteredInvoices.value;
+      received: {
+        pending: 0,
+        paid: 0
+      }
+    } satisfies Record<InvoiceTableRelationshipFilter, Record<InvoiceTableStatusFilter, number>>;
+
+    for (const invoice of allInvoices.value) {
+      for (const relationshipFilter of RELATIONSHIP_FILTERS) {
+        if (!matchesRelationshipFilter(invoice, relationshipFilter)) {
+          continue;
+        }
+
+        for (const statusFilter of STATUS_FILTERS) {
+          if (matchesStatusFilter(invoice, statusFilter)) {
+            counts[relationshipFilter][statusFilter] += 1;
+          }
+        }
+      }
     }
 
-    return relationshipFilteredInvoices.value.filter(
-      (invoice) => invoice.recipientChainId === selectedTargetChainId.value
-    );
+    return counts;
   });
+
+  const invoices = computed(() =>
+    allInvoices.value.filter(
+      (invoice) =>
+        matchesRelationshipFilter(invoice, selectedRelationshipFilter.value) &&
+        matchesStatusFilter(invoice, selectedStatusFilter.value)
+    )
+  );
   const hasInvoices = computed(() => invoices.value.length > 0);
   const isEmpty = computed(() => loaded.value && !isLoading.value && invoices.value.length === 0);
   const totalInvoices = computed(() => invoices.value.length);
 
-  const setSelectedView = (view: InvoiceView) => {
-    selectedView.value = view;
+  const setSelectedRelationshipFilter = (filter: InvoiceTableRelationshipFilter) => {
+    selectedRelationshipFilter.value = filter;
   };
 
-  const setSelectedTargetChainId = (chainId: InvoiceTargetChainFilter) => {
-    selectedTargetChainId.value = chainId;
+  const setSelectedStatusFilter = (filter: InvoiceTableStatusFilter) => {
+    selectedStatusFilter.value = filter;
   };
 
   const scheduleQueuedRefresh = () => {
@@ -381,15 +353,6 @@ export function useInvoices() {
       if (!areInvoiceArraysEqual(previousInvoices, relatedInvoices)) {
         allInvoices.value = relatedInvoices;
       }
-      availableViews.value = [...DEFAULT_VIEWS];
-      countsByView.value = {
-        all: relatedInvoices.length,
-        created: relatedInvoices.filter((invoice) => invoice.sourceTags.includes('created')).length,
-        received: relatedInvoices.filter((invoice) => invoice.sourceTags.includes('pending')).length
-      };
-      if (!availableViews.value.includes(selectedView.value)) {
-        selectedView.value = 'all';
-      }
       loaded.value = true;
       lastUpdatedAt.value = Date.now();
       resetAutoRefreshDelay();
@@ -425,15 +388,8 @@ export function useInvoices() {
     void runLoadInvoices('dependency');
   });
 
-  watch(activeChainId, (chainId) => {
-    if (Number.isFinite(chainId) && chainId > 0) {
-      selectedTargetChainId.value = chainId;
-    }
-  });
-
   return {
-    availableViews,
-    countsByView,
+    countsByFilter,
     errorMessage,
     hasInvoices,
     isEmpty,
@@ -447,13 +403,13 @@ export function useInvoices() {
     ),
     invoices,
     lastUpdatedAt: computed(() => lastUpdatedAt.value),
+    relationshipFilters,
     refreshIntervalMs: AUTO_REFRESH_INTERVAL_MS,
-    selectedView,
-    selectedTargetChainId,
-    selectedTargetChainLabel,
-    setSelectedTargetChainId,
-    setSelectedView,
-    targetChainOptions,
+    selectedRelationshipFilter,
+    selectedStatusFilter,
+    setSelectedRelationshipFilter,
+    setSelectedStatusFilter,
+    statusFilters,
     totalInvoices,
     loadInvoices
   };

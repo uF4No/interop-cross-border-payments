@@ -205,6 +205,22 @@
       @cancel="handleCreateInvoiceCancel"
     />
 
+    <PayInvoiceModal
+      v-model="isPayInvoiceModalOpen"
+      :invoice="payInvoiceTarget"
+      :payment-options="payInvoiceOptions"
+      :quote-type="payInvoiceQuoteType"
+      :loading="payInvoiceOptionsLoading"
+      :load-error="payInvoiceOptionsError"
+      :is-submitting="processingInvoiceId === payInvoiceTarget?.id"
+      :disable-confirm-reason="payInvoiceDisableReason"
+      :has-sufficient-billing-liquidity="payInvoiceHasSufficientBillingLiquidity"
+      :billing-liquidity-amount="payInvoiceBillingLiquidityAmount"
+      :billing-token-symbol="payInvoiceBillingTokenSymbol"
+      @confirm="handlePayInvoiceConfirm"
+      @cancel="handlePayInvoiceModalCancel"
+    />
+
     <div class="enterprise-card overflow-hidden">
       <div class="px-8 py-6 border-b border-slate-100 flex items-center justify-between">
         <h4 class="text-lg font-bold text-slate-900">Activity & Progress</h4>
@@ -357,6 +373,7 @@ import { formatEther, formatUnits } from 'viem';
 import BaseIcon from '../components/BaseIcon.vue';
 import CreateInvoiceModal from '../components/CreateInvoiceModal.vue';
 import InvoiceTableCard from '../components/InvoiceTableCard.vue';
+import PayInvoiceModal from '../components/PayInvoiceModal.vue';
 import { useActiveChainBalances } from '../composables/useActiveChainBalances';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
@@ -365,6 +382,8 @@ import { getBackendUrl } from '../utils/backend';
 import type { CreateInvoiceSubmitPayload } from '../utils/invoiceForm';
 import type {
   BackendServiceResponse,
+  InvoicePaymentOption,
+  InvoicePaymentOptionsResponseObject,
   InvoiceRecord,
   InvoiceResponseObject,
   InvoiceSourceTag
@@ -425,6 +444,8 @@ type InvoiceDraftSummary = {
   invoiceId?: string;
 };
 
+type PaymentOptionSymbol = 'USDC' | 'SGD' | 'TBILL';
+
 type TokenFundingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 type InvoiceTableCardExposed = {
   refreshInvoices: () => Promise<void>;
@@ -479,13 +500,14 @@ const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
     description: 'Wait for chain C to mark the invoice paid. Any cross-chain creator payout happens later in the backend.'
   }
 ] as const;
-const INVOICE_POLL_INTERVAL_MS = 3000;
+const INVOICE_POLL_INTERVAL_MS = 10000;
 const INVOICE_POLL_TIMEOUT_MS = 90000;
 const SHADOW_ACCOUNT_POLL_INTERVAL_MS = 3000;
 const SHADOW_ACCOUNT_POLL_TIMEOUT_MS = 90000;
 const FUND_TOKENS_POLL_INTERVAL_MS = 15000;
 const FUND_TOKENS_TIMEOUT_MS = 300000;
 const MAX_ERROR_MESSAGE_LENGTH = 220;
+const PAYMENT_OPTION_SYMBOLS: readonly PaymentOptionSymbol[] = ['USDC', 'SGD', 'TBILL'];
 
 const router = useRouter();
 const { isAuthenticated, getChain, selectedChainKey } = usePrividium();
@@ -518,6 +540,7 @@ const timestampFormatter = new Intl.DateTimeFormat(undefined, {
 
 const copied = ref(false);
 const isCreateInvoiceModalOpen = ref(false);
+const isPayInvoiceModalOpen = ref(false);
 const createInvoiceBanner = ref('');
 const createInvoiceBannerTone = ref<BannerTone>('info');
 const lastInvoiceDraft = ref<InvoiceDraftSummary | null>(null);
@@ -534,6 +557,14 @@ const interopSourceTxHash = ref('');
 const interopBundleHash = ref('');
 const interopInvoiceId = ref('');
 const processingInvoiceId = ref('');
+const payInvoiceTarget = ref<InvoiceRecord | null>(null);
+const payInvoiceOptions = ref<InvoicePaymentOption[]>([]);
+const payInvoiceOptionsLoading = ref(false);
+const payInvoiceOptionsError = ref('');
+const payInvoiceQuoteType = ref<'exact'>('exact');
+const payInvoiceBillingTokenSymbol = ref('');
+const payInvoiceBillingLiquidityAmount = ref('0');
+const payInvoiceHasSufficientBillingLiquidity = ref(true);
 const isTokenFunding = ref(false);
 const tokenFundingNotice = ref('');
 const tokenFundingNoticeTone = ref<'info' | 'success' | 'error'>('info');
@@ -563,8 +594,29 @@ const tokenFundingNoticeClass = computed(() => {
   }
   return 'border-sky-100 bg-sky-50 text-sky-800';
 });
+const payInvoiceDisableReason = computed(() => {
+  if (!payInvoiceTarget.value) {
+    return 'Select an invoice to continue.';
+  }
+  if (payInvoiceOptionsLoading.value || payInvoiceOptionsError.value) {
+    return '';
+  }
+  if (payInvoiceTarget.value.status.trim().toLowerCase() !== 'created') {
+    return `Invoice ${payInvoiceTarget.value.id} is ${payInvoiceTarget.value.status} and cannot be paid.`;
+  }
+  if (!payInvoiceHasSufficientBillingLiquidity.value) {
+    return 'InvoicePayment lacks enough billed-token liquidity on chain C for this invoice.';
+  }
+  if (payInvoiceOptions.value.length === 0) {
+    return `No supported payment tokens are configured on ${sourceChainLabel.value}.`;
+  }
+  return '';
+});
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+const isPaymentOptionSymbol = (value: unknown): value is PaymentOptionSymbol =>
+  typeof value === 'string' && PAYMENT_OPTION_SYMBOLS.includes(value as PaymentOptionSymbol);
 
 const toStringValue = (value: unknown): string | null => {
   if (typeof value === 'string') return value;
@@ -596,9 +648,12 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   const recipientRefundAddress = toStringValue(value.recipientRefundAddress);
   const billingToken = toStringValue(value.billingToken);
   const amount = toStringValue(value.amount);
+  const paymentToken = value.paymentToken;
+  const paymentAmount = toStringValue(value.paymentAmount);
   const status = toStringValue(value.status);
   const creatorChainId = toNumberValue(value.creatorChainId);
   const recipientChainId = toNumberValue(value.recipientChainId);
+  const paidAt = value.paidAt;
   const text = toStringValue(value.text);
   const sourceTags = value.sourceTags;
 
@@ -610,9 +665,12 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
       recipientRefundAddress &&
       billingToken &&
       amount &&
+      (paymentToken === null || paymentToken === undefined || typeof paymentToken === 'string') &&
+      paymentAmount &&
       status &&
       creatorChainId !== null &&
       recipientChainId !== null &&
+      (paidAt === null || paidAt === undefined || typeof paidAt === 'string') &&
       text !== null &&
       Array.isArray(sourceTags) &&
       sourceTags.every(isInvoiceSourceTag)
@@ -628,9 +686,38 @@ const isServiceResponse = <T,>(value: unknown): value is BackendServiceResponse<
   );
 };
 
+const isInvoicePaymentOption = (value: unknown): value is InvoicePaymentOption => {
+  if (!isRecord(value)) return false;
+
+  return Boolean(
+    toStringValue(value.token) &&
+      toStringValue(value.symbol) &&
+      toStringValue(value.paymentAmount) &&
+      typeof value.isBillingToken === 'boolean'
+  );
+};
+
 const isInvoiceResponseObject = (value: unknown): value is InvoiceResponseObject => {
   if (!isRecord(value) || !Array.isArray(value.invoices)) return false;
   return value.invoices.every(isInvoiceRecord);
+};
+
+const isInvoicePaymentOptionsResponseObject = (
+  value: unknown
+): value is InvoicePaymentOptionsResponseObject => {
+  if (!isRecord(value) || !Array.isArray(value.options)) return false;
+
+  return Boolean(
+    toStringValue(value.invoiceId) &&
+      toStringValue(value.status) &&
+      toStringValue(value.billingToken) &&
+      toStringValue(value.billingTokenSymbol) &&
+      toStringValue(value.billingAmount) &&
+      value.quoteType === 'exact' &&
+      toStringValue(value.invoicePaymentBillingTokenBalance) &&
+      typeof value.hasSufficientBillingLiquidity === 'boolean' &&
+      value.options.every(isInvoicePaymentOption)
+  );
 };
 
 const truncateError = (message: string, maxLength = MAX_ERROR_MESSAGE_LENGTH) => {
@@ -828,6 +915,32 @@ const openCreateInvoiceModal = () => {
   isCreateInvoiceModalOpen.value = true;
 };
 
+const resetPayInvoiceModalState = () => {
+  payInvoiceOptions.value = [];
+  payInvoiceOptionsLoading.value = false;
+  payInvoiceOptionsError.value = '';
+  payInvoiceQuoteType.value = 'exact';
+  payInvoiceBillingTokenSymbol.value = '';
+  payInvoiceBillingLiquidityAmount.value = '0';
+  payInvoiceHasSufficientBillingLiquidity.value = true;
+};
+
+const handlePayInvoiceModalCancel = () => {
+  if (processingInvoiceId.value) {
+    return;
+  }
+
+  isPayInvoiceModalOpen.value = false;
+  payInvoiceTarget.value = null;
+  resetPayInvoiceModalState();
+};
+
+const closePayInvoiceModal = () => {
+  isPayInvoiceModalOpen.value = false;
+  payInvoiceTarget.value = null;
+  resetPayInvoiceModalState();
+};
+
 const handleCreateInvoiceCancel = () => {
   if (!isInvoiceProcessing.value) {
     createInvoiceBanner.value = '';
@@ -1008,6 +1121,50 @@ const updateTransaction = (
   if (updates.status) tx.status = updates.status;
   if (updates.hash) tx.hash = updates.hash;
   if (updates.detail) tx.detail = updates.detail;
+};
+
+const sourceChainSupportsPaymentSymbol = (symbol: string): symbol is PaymentOptionSymbol => {
+  if (!isPaymentOptionSymbol(symbol)) {
+    return false;
+  }
+
+  return Boolean(sourceConfig.value.tokenAddresses[symbol]);
+};
+
+const fetchInvoicePaymentOptions = async (
+  invoice: InvoiceRecord
+): Promise<InvoicePaymentOptionsResponseObject> => {
+  const response = await fetch(
+    getBackendUrl(`/invoices/${encodeURIComponent(invoice.id)}/payment-options`),
+    {
+      headers: {
+        Accept: 'application/json'
+      }
+    }
+  );
+
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const serverMessage =
+      isServiceResponse(payload) && isRecord(payload.responseObject)
+        ? toStringValue(payload.responseObject.error) || payload.message
+        : isServiceResponse(payload)
+          ? payload.message
+          : `Request failed with status ${response.status}`;
+    throw new Error(serverMessage);
+  }
+
+  if (!isServiceResponse<InvoicePaymentOptionsResponseObject>(payload)) {
+    throw new Error('Unexpected payment-options response format.');
+  }
+  if (!payload.success) {
+    throw new Error(payload.message || 'Backend reported an error while loading payment options.');
+  }
+  if (!isInvoicePaymentOptionsResponseObject(payload.responseObject)) {
+    throw new Error('Unexpected payment-options payload.');
+  }
+
+  return payload.responseObject;
 };
 
 const fetchInvoicesSnapshot = async (): Promise<InvoiceRecord[]> => {
@@ -1312,6 +1469,43 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
 
 const handlePayInvoice = async (invoice: InvoiceRecord) => {
   errorMessage.value = '';
+  payInvoiceTarget.value = invoice;
+  resetPayInvoiceModalState();
+  isPayInvoiceModalOpen.value = true;
+  payInvoiceOptionsLoading.value = true;
+
+  try {
+    const responseObject = await fetchInvoicePaymentOptions(invoice);
+    const filteredOptions = responseObject.options.filter((option) =>
+      sourceChainSupportsPaymentSymbol(option.symbol)
+    );
+
+    payInvoiceOptions.value = filteredOptions;
+    payInvoiceQuoteType.value = responseObject.quoteType;
+    payInvoiceBillingTokenSymbol.value = responseObject.billingTokenSymbol;
+    payInvoiceBillingLiquidityAmount.value = responseObject.invoicePaymentBillingTokenBalance;
+    payInvoiceHasSufficientBillingLiquidity.value = responseObject.hasSufficientBillingLiquidity;
+
+    if (filteredOptions.length === 0) {
+      payInvoiceOptionsError.value = `No quoteable payment tokens are configured on ${sourceChainLabel.value} for invoice ${invoice.id}.`;
+    }
+  } catch (error) {
+    payInvoiceOptionsError.value = formatTransactionError(
+      error,
+      `Failed to load payment options for invoice ${invoice.id}.`
+    );
+  } finally {
+    payInvoiceOptionsLoading.value = false;
+  }
+};
+
+const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => {
+  const invoice = payInvoiceTarget.value;
+  if (!invoice) {
+    return;
+  }
+
+  errorMessage.value = '';
   interopError.value = '';
   processingInvoiceId.value = invoice.id;
   interopFlow.value = 'pay';
@@ -1320,7 +1514,7 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     'pay',
     'pay-validate',
     'Validating invoice payment, source-chain funding path, and chain C settlement readiness.',
-    'Checking invoice state, recipient wallet ownership, and whether chain C can settle the invoice before any funds move.'
+    `Checking invoice state, selected ${selectedOption.symbol} quote, payer wallet ownership, and whether chain C can settle the invoice before any funds move.`
   );
   interopSourceTxHash.value = '';
   interopBundleHash.value = '';
@@ -1330,7 +1524,7 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     `payInvoice(${invoice.id})`,
     'pending',
     'Preparing bundle...',
-    'Validating invoice payment for chain C.'
+    `Validating invoice payment for chain C using ${selectedOption.symbol}.`
   );
   syncTransactionInterop(txId, 'pay');
 
@@ -1338,7 +1532,6 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     if (invoice.status.trim().toLowerCase() !== 'created') {
       throw new Error(`Invoice ${invoice.id} is ${invoice.status} and cannot be paid.`);
     }
-
     if (activeChainId.value !== invoice.recipientChainId) {
       throw new Error(
         `Invoice ${invoice.id} can only be paid from chain ${invoice.recipientChainId}. Switch to the recipient chain and retry.`
@@ -1357,6 +1550,9 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
         `Active account ${ssoAccount.value} does not match invoice recipient ${invoice.recipientRefundAddress}. Re-select the matching passkey account and retry.`
       );
     }
+    if (payInvoiceDisableReason.value) {
+      throw new Error(payInvoiceDisableReason.value);
+    }
 
     const paymentPreflight = await readPayInvoicePreflight({
       creatorChainId: invoice.creatorChainId
@@ -1370,22 +1566,24 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
       );
     }
 
+    closePayInvoiceModal();
+
     setInteropProgress(
       'pay',
       'pay-prepare',
       'Preparing the source-side funding leg for the chain C payer shadow account.',
-      'Checking source-token allowance and signing an approval transaction only if the native token vault needs it.'
+      `Checking source-token allowance and signing an approval transaction only if the native token vault needs it for ${selectedOption.symbol}.`
     );
     updateTransaction(txId, {
       hash: 'Authorizing passkey...',
-      detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for invoice ${invoice.id}.`
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for invoice ${invoice.id} with ${selectedOption.symbol}.`
     });
     syncTransactionInterop(txId, 'pay');
 
     const fundingResult = await sendFundPayInvoiceBundle({
       invoiceId: invoice.id,
-      paymentAmount: invoice.amount,
-      paymentToken: invoice.billingToken as `0x${string}`,
+      paymentAmount: selectedOption.paymentAmount,
+      paymentToken: selectedOption.token as `0x${string}`,
       payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
     });
 
@@ -1444,20 +1642,20 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
       'pay',
       'pay-settle',
       'Authorizing the settlement bundle that approves the destination token and calls payInvoice on chain C.',
-      'Signing the second interop stage so the payer shadow account can approve InvoicePayment and settle the invoice on chain C.'
+      `Signing the second interop stage so the payer shadow account can approve InvoicePayment and settle the invoice on chain C in ${selectedOption.symbol}.`
     );
     interopSourceTxHash.value = '';
     interopBundleHash.value = '';
     updateTransaction(txId, {
       hash: 'Authorizing settlement...',
-      detail: `Authorizing ${sourceChainLabel.value} wallet session to approve the destination token and settle invoice ${invoice.id}.`
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to approve ${selectedOption.symbol} on chain C and settle invoice ${invoice.id}.`
     });
     syncTransactionInterop(txId, 'pay');
 
     const settlementResult = await sendSettlePayInvoiceBundle({
       invoiceId: invoice.id,
-      paymentAmount: invoice.amount,
-      paymentToken: invoice.billingToken as `0x${string}`,
+      paymentAmount: selectedOption.paymentAmount,
+      paymentToken: selectedOption.token as `0x${string}`,
       payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
     });
 

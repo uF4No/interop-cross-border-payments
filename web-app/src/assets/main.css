@@ -66,6 +66,10 @@ body {
   @apply bg-[#f8fafc] border border-slate-200 rounded-full px-5 py-3 text-sm focus:ring-2 focus:ring-accent/10 focus:border-accent outline-none transition-all;
 }
 
+.enterprise-textarea {
+  @apply rounded-3xl;
+}
+
 .floating-navbar {
   @apply sticky top-8 left-0 right-0 z-50 mx-auto w-full max-w-7xl px-6;
 }
