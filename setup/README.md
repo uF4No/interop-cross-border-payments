@@ -79,24 +79,23 @@ The main command now runs the 3-chain setup flow via `setup:3chain`. That flow:
    - Deploys the SSO and app contracts used by the flow.
    - Writes `config/contracts.json`.
    - Refreshes `backend/.env` and `web-app/.env`.
-2. `pnpm setup:3chain` - explicit entrypoint for the same full 3-chain flow.
-3. `pnpm setup:permissions` - compatibility alias for the same full 3-chain flow.
-4. `pnpm setup:system` - system-only setup:
+2. `pnpm setup:permissions` - compatibility alias for the same full 3-chain flow.
+3. `pnpm setup:system` - system-only setup:
    - Deploys/ensures SSO contracts (validators, guardian, entrypoint, beacon, factory).
    - Registers contracts and permissions in Prividium.
    - Updates `config/contracts.json` and refreshes env files.
-5. `pnpm setup:app` - app-only setup:
+4. `pnpm setup:app` - app-only setup:
    - Deploys the app contract(s) used by the demo flow.
    - Registers contract permissions in Prividium.
    - Updates `config/contracts.json` and refreshes env files.
-6. `pnpm setup-app` - registers an OAuth application only:
+5. `pnpm setup-app` - registers an OAuth application only:
    - Uses `PRIVIDIUM_APP_NAME`, `PRIVIDIUM_APP_ORIGIN`, `PRIVIDIUM_APP_REDIRECT_URIS`.
    - Prints `id` and `oauthClientId` for reuse in other packages.
-7. `pnpm verify:sso` (alias: `pnpm check:contracts`) - verification:
+6. `pnpm verify:sso` (alias: `pnpm check:contracts`) - verification:
    - Checks on-chain code for SSO contracts.
    - Confirms the SSO contracts are registered and permissions are configured.
-8. `pnpm refresh:env` - re-sync `.env` files from `config/contracts.json`.
-9. `pnpm typecheck` - TypeScript typecheck for this package.
+7. `pnpm refresh:env` - re-sync `.env` files from `config/contracts.json`.
+8. `pnpm typecheck` - TypeScript typecheck for this package.
 
 ## Source of Truth
 

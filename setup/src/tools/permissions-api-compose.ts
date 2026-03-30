@@ -145,6 +145,21 @@ function renderCommandValueLine(line: string, value: string): string {
   return `${indent}"${value}"${hasComma ? ',' : ''}`;
 }
 
+function replaceInlineEntrypointValue(line: string, entryPoint: string): string | null {
+  const patterns = [
+    /(--entrypoints\s+\")([^"]+)(\")/,
+    /(--entrypoints\s+\')([^']+)(\')/
+  ];
+
+  for (const pattern of patterns) {
+    if (pattern.test(line)) {
+      return line.replace(pattern, `$1${entryPoint}$3`);
+    }
+  }
+
+  return null;
+}
+
 function setBundlerEntrypoint(
   lines: string[],
   serviceName: BundlerServiceName,
@@ -170,7 +185,29 @@ function setBundlerEntrypoint(
     }
   }
 
-  throw new Error(`Could not find --entrypoints command flag for ${serviceName}`);
+  for (let i = serviceStart + 1; i < serviceEnd; i += 1) {
+    const line = lines[i];
+    if (!line?.includes('--entrypoints')) {
+      continue;
+    }
+
+    if (
+      line.includes('$$ENTRYPOINT') ||
+      line.includes('$ENTRYPOINT') ||
+      line.includes('${ENTRYPOINT}') ||
+      line.includes('$${ENTRYPOINT}')
+    ) {
+      return;
+    }
+
+    const replaced = replaceInlineEntrypointValue(line, normalizedEntryPoint);
+    if (replaced) {
+      lines[i] = replaced;
+      return;
+    }
+  }
+
+  throw new Error(`Could not find a supported entrypoint configuration for ${serviceName}`);
 }
 
 function defaultBundlerRpcUrlForService(serviceName: PermissionApiServiceName): string {

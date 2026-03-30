@@ -78,6 +78,27 @@ const invoiceAbi = [
   {
     type: 'function',
     stateMutability: 'view',
+    name: 'getWhitelistedTokens',
+    inputs: [],
+    outputs: [
+      { name: 'tokenAddresses', type: 'address[]' },
+      { name: 'symbols', type: 'string[]' }
+    ]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'getConversionAmount',
+    inputs: [
+      { name: 'fromToken', type: 'address' },
+      { name: 'toToken', type: 'address' },
+      { name: 'amount', type: 'uint256' }
+    ],
+    outputs: [{ name: 'convertedAmount', type: 'uint256' }]
+  },
+  {
+    type: 'function',
+    stateMutability: 'view',
     name: 'getInvoiceDetails',
     inputs: [{ name: 'invoiceId', type: 'uint256' }],
     outputs: [
@@ -135,6 +156,16 @@ const invoiceAbi = [
   }
 ] as const;
 
+const erc20Abi = [
+  {
+    type: 'function',
+    stateMutability: 'view',
+    name: 'balanceOf',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }]
+  }
+] as const;
+
 type ContractsConfig = {
   chains?: {
     c?: {
@@ -143,6 +174,9 @@ type ContractsConfig = {
       apiUrl?: string;
       authBaseUrl?: string;
       invoicePayment?: string;
+      tokens?: Partial<
+        Record<'usdc' | 'sgd' | 'tbill', { address?: string }>
+      >;
     };
   };
 };
@@ -196,6 +230,7 @@ type ChainCContext = {
   apiUrl: string;
   authBaseUrl: string;
   invoicePayment: Address;
+  tokens: Partial<Record<'usdc' | 'sgd' | 'tbill', { address?: Address }>>;
 };
 
 type InvoiceResponseObject = {
@@ -219,6 +254,25 @@ type InvoiceResponseObject = {
   createdInvoiceIds: string[];
   pendingInvoiceIds: string[];
   invoices: NormalizedInvoice[];
+};
+
+type PaymentOption = {
+  token: Address;
+  symbol: string;
+  paymentAmount: string;
+  isBillingToken: boolean;
+};
+
+type InvoicePaymentOptionsResponseObject = {
+  invoiceId: string;
+  status: InvoiceStatus | 'Unknown';
+  billingToken: Address;
+  billingTokenSymbol: string;
+  billingAmount: string;
+  options: PaymentOption[];
+  quoteType: 'exact';
+  invoicePaymentBillingTokenBalance: string;
+  hasSufficientBillingLiquidity: boolean;
 };
 
 type AdminAuthState = {
@@ -252,6 +306,16 @@ invoicesRegistry.registerPath({
 invoicesRegistry.registerPath({
   method: 'post',
   path: '/invoices',
+  tags: ['Invoices'],
+  responses: {
+    ...createApiResponse(z.any(), 'Success', StatusCodes.OK),
+    ...createApiResponse(z.any(), 'Bad Request', StatusCodes.BAD_REQUEST)
+  }
+});
+
+invoicesRegistry.registerPath({
+  method: 'get',
+  path: '/invoices/{invoiceId}/payment-options',
   tags: ['Invoices'],
   responses: {
     ...createApiResponse(z.any(), 'Success', StatusCodes.OK),
@@ -315,7 +379,12 @@ function loadChainCContext(): ChainCContext {
     rpcUrl,
     apiUrl,
     authBaseUrl,
-    invoicePayment: getAddress(invoicePayment)
+    invoicePayment: getAddress(invoicePayment),
+    tokens: {
+      usdc: chainC.tokens?.usdc?.address ? { address: getAddress(chainC.tokens.usdc.address) } : undefined,
+      sgd: chainC.tokens?.sgd?.address ? { address: getAddress(chainC.tokens.sgd.address) } : undefined,
+      tbill: chainC.tokens?.tbill?.address ? { address: getAddress(chainC.tokens.tbill.address) } : undefined
+    }
   };
 }
 
@@ -717,6 +786,20 @@ function filterInvoicesByView(invoices: NormalizedInvoice[], view: InvoiceView):
   return invoices.filter((invoice) => invoice.sourceTags.includes(sourceTag));
 }
 
+function resolveConfiguredTokenSymbol(chainC: ChainCContext, token: Address): string | null {
+  const normalized = token.toLowerCase();
+  const match = Object.entries(chainC.tokens).find(
+    ([, deployment]) => deployment?.address && deployment.address.toLowerCase() === normalized
+  )?.[0];
+
+  return match ? match.toUpperCase() : null;
+}
+
+function normalizeInvoiceStatusCode(status: number): InvoiceStatus | 'Unknown' {
+  const statuses: InvoiceStatus[] = ['Created', 'Paid', 'Cancelled'];
+  return statuses[status] ?? 'Unknown';
+}
+
 async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView) {
   const chainC = loadChainCContext();
 
@@ -839,6 +922,108 @@ async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView)
   } satisfies InvoiceResponseObject;
 }
 
+async function fetchInvoicePaymentOptions(invoiceId: bigint): Promise<InvoicePaymentOptionsResponseObject> {
+  const chainC = loadChainCContext();
+  const token = await getAdminAuthToken(chainC);
+  const client = createChainCClient(chainC, token);
+
+  let invoice: RawInvoice;
+  try {
+    invoice = (await client.readContract({
+      address: chainC.invoicePayment,
+      abi: invoiceAbi,
+      functionName: 'getInvoiceDetails',
+      args: [invoiceId]
+    })) as unknown as RawInvoice;
+  } catch (error) {
+    throw new Error(
+      `Invoice ${invoiceId.toString()} does not exist on chain C. ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  const status = normalizeInvoiceStatusCode(Number(invoice.status));
+  if (status !== 'Created') {
+    throw new Error(`Invoice ${invoiceId.toString()} is ${status} and cannot be paid.`);
+  }
+
+  const [whitelistRows, invoicePaymentBillingTokenBalance] = await Promise.all([
+    client.readContract({
+      address: chainC.invoicePayment,
+      abi: invoiceAbi,
+      functionName: 'getWhitelistedTokens'
+    }) as Promise<readonly [readonly Address[], readonly string[]]>,
+    client.readContract({
+      address: invoice.billingToken,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [chainC.invoicePayment]
+    }) as Promise<bigint>
+  ]);
+
+  const [whitelistedTokenAddresses, whitelistedSymbols] = whitelistRows;
+  const billingTokenSymbol =
+    resolveConfiguredTokenSymbol(chainC, invoice.billingToken) ??
+    whitelistedSymbols.find(
+      (_, index) =>
+        whitelistedTokenAddresses[index] &&
+        whitelistedTokenAddresses[index].toLowerCase() === invoice.billingToken.toLowerCase()
+    ) ??
+    'TOKEN';
+
+  const options: PaymentOption[] = [];
+
+  for (let index = 0; index < whitelistedTokenAddresses.length; index += 1) {
+    const candidateToken = getAddress(whitelistedTokenAddresses[index]!);
+    const configuredSymbol = resolveConfiguredTokenSymbol(chainC, candidateToken);
+    const fallbackSymbol = whitelistedSymbols[index] ?? 'TOKEN';
+    const symbol = configuredSymbol ?? fallbackSymbol;
+    const isBillingToken = candidateToken.toLowerCase() === invoice.billingToken.toLowerCase();
+
+    if (isBillingToken) {
+      options.push({
+        token: candidateToken,
+        symbol,
+        paymentAmount: invoice.amount.toString(),
+        isBillingToken: true
+      });
+      continue;
+    }
+
+    try {
+      const paymentAmount = (await client.readContract({
+        address: chainC.invoicePayment,
+        abi: invoiceAbi,
+        functionName: 'getConversionAmount',
+        args: [invoice.billingToken, candidateToken, invoice.amount]
+      })) as bigint;
+
+      options.push({
+        token: candidateToken,
+        symbol,
+        paymentAmount: paymentAmount.toString(),
+        isBillingToken: false
+      });
+    } catch (error) {
+      console.warn(
+        `Skipping unquoteable payment token ${candidateToken} for invoice ${invoiceId.toString()}:`,
+        error
+      );
+    }
+  }
+
+  return {
+    invoiceId: invoice.id.toString(),
+    status,
+    billingToken: getAddress(invoice.billingToken),
+    billingTokenSymbol,
+    billingAmount: invoice.amount.toString(),
+    options,
+    quoteType: 'exact',
+    invoicePaymentBillingTokenBalance: invoicePaymentBillingTokenBalance.toString(),
+    hasSufficientBillingLiquidity: invoicePaymentBillingTokenBalance >= invoice.amount
+  };
+}
+
 async function handleInvoices(_req: Request, res: Response) {
   let serviceResponse: ServiceResponse<unknown>;
   try {
@@ -861,5 +1046,38 @@ async function handleInvoices(_req: Request, res: Response) {
   res.status(serviceResponse.statusCode).send(serviceResponse);
 }
 
+async function handleInvoicePaymentOptions(req: Request, res: Response) {
+  let serviceResponse: ServiceResponse<unknown>;
+
+  try {
+    const invoiceIdRaw = req.params.invoiceId;
+    const invoiceIdParam =
+      typeof invoiceIdRaw === 'string'
+        ? invoiceIdRaw.trim()
+        : Array.isArray(invoiceIdRaw)
+          ? invoiceIdRaw[0]?.trim()
+          : undefined;
+    if (!invoiceIdParam || !/^\d+$/.test(invoiceIdParam)) {
+      throw new Error('Invoice ID must be a positive integer.');
+    }
+
+    const responseObject = await fetchInvoicePaymentOptions(BigInt(invoiceIdParam));
+    serviceResponse = ServiceResponse.success('Fetched invoice payment options', responseObject);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to fetch invoice payment options';
+    const notFound = /\bdoes not exist\b/i.test(message);
+    const conflict = /\bcannot be paid\b/i.test(message);
+
+    serviceResponse = ServiceResponse.failure(
+      'Failed to fetch invoice payment options',
+      { error: message },
+      notFound ? StatusCodes.NOT_FOUND : conflict ? StatusCodes.CONFLICT : StatusCodes.INTERNAL_SERVER_ERROR
+    );
+  }
+
+  res.status(serviceResponse.statusCode).send(serviceResponse);
+}
+
+invoicesRouter.get('/:invoiceId/payment-options', handleInvoicePaymentOptions);
 invoicesRouter.get('/', handleInvoices);
 invoicesRouter.post('/', handleInvoices);

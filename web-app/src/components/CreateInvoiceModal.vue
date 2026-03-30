@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
                     rows="5"
                     maxlength="280"
                     placeholder="Optional invoice description"
-                    class="enterprise-input w-full rounded-2xl px-4 py-3"
+                    class="enterprise-input enterprise-textarea w-full px-4 py-3"
                     :class="visibleError('text') ? 'border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-rose-100' : ''"
                     @blur="markTouched('text')"
                   ></textarea>

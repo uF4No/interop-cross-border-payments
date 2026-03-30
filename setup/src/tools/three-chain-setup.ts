@@ -96,6 +96,8 @@ const EXCHANGE_RATES = [
   { from: 'tbill', to: 'usdc', rate: parseUnits('1.02', 18) }
 ] as const satisfies ReadonlyArray<{ from: TokenKey; to: TokenKey; rate: bigint }>;
 
+const INVOICE_PAYMENT_INITIAL_TOKEN_LIQUIDITY = parseUnits('100000000', 18);
+
 type ArtifactJson = {
   abi: unknown;
   bytecode?: {
@@ -287,6 +289,27 @@ async function ensureMintedBalance(
     abi: erc20Abi,
     functionName: 'mint',
     args: [account, minimumBalance - balance],
+    chain: undefined,
+    account: walletAccount(context)
+  });
+  await context.publicClient.waitForTransactionReceipt({ hash });
+}
+
+async function mintToAccount(
+  context: ChainContext,
+  tokenAddress: Address,
+  account: Address,
+  amount: bigint
+): Promise<void> {
+  if (amount <= 0n) {
+    return;
+  }
+
+  const hash = await context.walletClient.writeContract({
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: 'mint',
+    args: [account, amount],
     chain: undefined,
     account: walletAccount(context)
   });
@@ -682,6 +705,14 @@ export async function setupThreeChainContracts(
       chainC.deployer,
       tokenSpec.premintAmount
     );
+    if (invoiceDeployment.deployed) {
+      await mintToAccount(
+        chainC,
+        canonicalDeployment.address,
+        invoiceDeployment.address,
+        INVOICE_PAYMENT_INITIAL_TOKEN_LIQUIDITY
+      );
+    }
     await ensureAllowance(
       chainC,
       canonicalDeployment.address,

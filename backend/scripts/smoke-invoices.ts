@@ -23,8 +23,11 @@ const invoicePaymentAbi = parseAbi([
   'function getUserCreatedInvoiceCount(address user) view returns (uint256)',
   'function getUserCreatedInvoices(address user, uint256 startIndex, uint256 endIndex) view returns (uint256[])',
   'function getWhitelistedTokens() view returns (address[] tokenAddresses, string[] symbols)',
+  'function getConversionAmount(address fromToken, address toToken, uint256 amount) view returns (uint256)',
   'function createInvoice(address recipient, uint256 recipientChainId, address billingToken, uint256 amount, uint256 creatorChainId, address creatorRefundAddress, address recipientRefundAddress, string text) returns (uint256 invoiceId)'
 ]);
+
+const erc20Abi = parseAbi(['function balanceOf(address account) view returns (uint256)']);
 
 type TokenDeployment = {
   address?: string;
@@ -180,6 +183,32 @@ async function callInvoicesEndpoint(baseUrl: string) {
   }
 
   fail(`Unable to reach /invoices endpoint. Attempts: ${errors.join(' | ')}`);
+}
+
+async function callInvoicePaymentOptionsEndpoint(baseUrl: string, invoiceId: string) {
+  const response = await fetch(
+    `${baseUrl.replace(/\/+$/, '')}/invoices/${encodeURIComponent(invoiceId)}/payment-options`,
+    {
+      headers: {
+        Accept: 'application/json'
+      }
+    }
+  );
+
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    fail(
+      `/invoices/${invoiceId}/payment-options failed: ${response.status} ${response.statusText} ${text}`
+    );
+  }
+
+  try {
+    return JSON.parse(text) as ServiceResponse<unknown> | unknown;
+  } catch (error) {
+    fail(
+      `/invoices/${invoiceId}/payment-options returned non-JSON payload: ${error instanceof Error ? error.message : error}`
+    );
+  }
 }
 
 function unwrapResponseObject(payload: unknown): unknown {
@@ -368,13 +397,92 @@ async function main() {
     );
   }
 
+  const paymentOptionsPayload = unwrapResponseObject(
+    await callInvoicePaymentOptionsEndpoint(backendBaseUrl, createdInvoiceId.toString())
+  );
+  if (!paymentOptionsPayload || typeof paymentOptionsPayload !== 'object') {
+    fail(`Payment options payload for invoice ${createdInvoiceId.toString()} was not an object.`);
+  }
+
+  const paymentOptionsRecord = paymentOptionsPayload as Record<string, unknown>;
+  const billingAmountFromEndpoint = paymentOptionsRecord.billingAmount;
+  if (String(billingAmountFromEndpoint) !== billingAmount.toString()) {
+    fail(
+      `Payment options billingAmount mismatch. expected=${billingAmount.toString()} actual=${String(billingAmountFromEndpoint)}`
+    );
+  }
+
+  const options = Array.isArray(paymentOptionsRecord.options)
+    ? (paymentOptionsRecord.options as Array<Record<string, unknown>>)
+    : [];
+  if (options.length === 0) {
+    fail(`Payment options endpoint returned no quoteable payment options for invoice ${createdInvoiceId.toString()}.`);
+  }
+
+  const sameTokenOption = options.find(
+    (option) =>
+      typeof option.token === 'string' &&
+      getAddress(option.token) === billingTokenCandidate.address
+  );
+  if (!sameTokenOption) {
+    fail(`Payment options endpoint did not include the billing token ${billingTokenCandidate.address}.`);
+  }
+  if (String(sameTokenOption.paymentAmount) !== billingAmount.toString()) {
+    fail(
+      `Same-token payment amount mismatch. expected=${billingAmount.toString()} actual=${String(sameTokenOption.paymentAmount)}`
+    );
+  }
+
+  const alternateTokenCandidate =
+    tokenCandidates.find((entry) => entry.address !== billingTokenCandidate.address) ?? null;
+  if (!alternateTokenCandidate) {
+    fail('Unable to find an alternate payment token candidate for quote verification.');
+  }
+
+  const alternateOption = options.find(
+    (option) =>
+      typeof option.token === 'string' &&
+      getAddress(option.token) === alternateTokenCandidate.address
+  );
+  if (!alternateOption) {
+    fail(
+      `Payment options endpoint did not include alternate token ${alternateTokenCandidate.address}.`
+    );
+  }
+
+  const expectedAlternateAmount = (await publicClient.readContract({
+    address: contractAddress,
+    abi: invoicePaymentAbi,
+    functionName: 'getConversionAmount',
+    args: [billingTokenCandidate.address, alternateTokenCandidate.address, billingAmount]
+  })) as bigint;
+  if (String(alternateOption.paymentAmount) !== expectedAlternateAmount.toString()) {
+    fail(
+      `Alternate-token payment amount mismatch. expected=${expectedAlternateAmount.toString()} actual=${String(alternateOption.paymentAmount)}`
+    );
+  }
+
+  const invoicePaymentBillingTokenBalance = (await publicClient.readContract({
+    address: billingTokenCandidate.address,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [contractAddress]
+  })) as bigint;
+  const expectedLiquidityFlag = invoicePaymentBillingTokenBalance >= billingAmount;
+  if (Boolean(paymentOptionsRecord.hasSufficientBillingLiquidity) !== expectedLiquidityFlag) {
+    fail(
+      `Liquidity flag mismatch. expected=${expectedLiquidityFlag} actual=${String(paymentOptionsRecord.hasSufficientBillingLiquidity)}`
+    );
+  }
+
   console.log(
     JSON.stringify(
       {
         ok: true,
         createdInvoiceId: createdInvoiceId.toString(),
         billingToken: billingTokenCandidate.address,
-        backendInvoiceFound: true
+        backendInvoiceFound: true,
+        alternatePaymentToken: alternateTokenCandidate.address
       },
       null,
       2

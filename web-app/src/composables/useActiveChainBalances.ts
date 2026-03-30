@@ -23,7 +23,7 @@ export type ActiveChainBalanceRow = {
 
 const env = import.meta.env as Record<string, string | undefined>;
 const TOKEN_SYMBOLS: TokenSymbol[] = ['USDC', 'SGD', 'TBILL'];
-const AUTO_REFRESH_INTERVAL_MS = 30_000;
+const AUTO_REFRESH_INTERVAL_MS = 120_000;
 const MAX_AUTO_REFRESH_BACKOFF_MS = 5 * 60_000;
 const erc20Abi = parseAbi([
   'function balanceOf(address owner) view returns (uint256)',
