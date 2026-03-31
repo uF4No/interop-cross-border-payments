@@ -3,8 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build": "forge build",
-    "test": "forge test",
+    "build": "([ -d lib/openzeppelin-contracts/contracts ] || forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-git --shallow) && forge build",
+    "test": "([ -d lib/openzeppelin-contracts/contracts ] || forge install OpenZeppelin/openzeppelin-contracts@v5.0.2 --no-git --shallow) && forge test",
     "format": "forge fmt"
   }
 }

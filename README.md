@@ -22,6 +22,9 @@ git submodule update --init --recursive
 pnpm install
 ```
 
+If you are validating the project from a plain directory copy instead of a git clone, skip the `git submodule update` command.
+That command is only needed for the checked-in `prividium-3chain-local/` submodule.
+
 ### 2. Initialize the setup environment file
 
 Create `setup/.env` from the provided template:
@@ -47,6 +50,10 @@ Compile the smart contracts with:
 ```bash
 pnpm --filter contracts build
 ```
+
+On the first run, this command bootstraps the pinned Foundry libraries into `contracts/lib/` before compiling.
+For the current contracts project, that means fetching the pinned OpenZeppelin dependency into `contracts/lib/openzeppelin-contracts/`.
+This works even in a plain copied directory that is not a git checkout, so you do not need to run `forge install` manually.
 
 ### 5. Deploy contracts and configure permissions
 
