@@ -1,42 +1,114 @@
-# Prividium Template - Vue & Foundry Monorepo
+# ZKsync Prividium: Cross Chain Invoicing
 
-Welcome to the ZKsync Prividium™ template! This monorepo provides a complete starting point for building privacy-focused decentralized applications on Prividium™ chains.
- 
+This repository contains a cross-chain invoicing application built on ZKsync Prividium. It combines smart contracts, a backend API, and a Vue frontend so users can authenticate with passkey-based SSO smart accounts, create invoices from one Prividium chain, and settle them on chain C through the interop flow.
 
-## TODOs
+## Requirements
 
-- [ ] migrate contracts from existing repo
-- [ ] UI create invoices
-- [ ] service to read FX from chain C
-- [ ] UI pay invoice
-- [ ] run services in parallel as prividium repo?
-- [x] create docker compose for 3 L2s + Prividium
-- [x] patch L1 genesis with regristration of 3 L2 chains
-- [x] ~~include local-prividium as dep / package~~
+### System requirements
 
-## Using this template
+- Node.js v22.10.0 or higher
+- pnpm v9.16.1 or higher
+- Foundry v1.0.0 or higher
+- Docker
 
-This template is a starting point for building privacy-focused decentralized applications on Prividium™ chains. It includes a basic counter contract, a setup script to deploy contracts and configure permissions for the sample counter contract in the ZKsync Prividium™ ecosystem, a Node.js backend service necessary for ZKsync SSO Smart Account deployment, and a Vue 3 + TypeScript frontend demonstrating Prividium authentication and secure RPC proxying to interact with smart contracts.
+## Quick Start
 
-### Branding and style customization
+### 1. Install Dependencies
 
-The web app can be easily updated to use different branding by updating the following environment variables in the `web-app/.env` file:
+Initialize the checked-in submodule and install the workspace dependencies from the repository root:
+
+```bash
+git submodule update --init --recursive
+pnpm install
+```
+
+### 2. Initialize the setup environment file
+
+Create `setup/.env` from the provided template:
+
+```bash
+pnpm setup:init-env
+```
+
+If `setup/.env` already exists, the command leaves it unchanged.
+
+### 3. Start the local chain stack
+
+Run the following command to start the chains locally.
+
+```bash
+cd prividium-3chain-local && docker compose up -d
+```
+
+### 4. Compile smart contracts
+
+Compile the smart contracts with:
+
+```bash
+pnpm --filter contracts build
+```
+
+### 5. Deploy contracts and configure permissions
+
+The setup script deploys the SSO contracts, configures the required permissions, creates the application in Prividium, and deploys the invoicing contracts.
+
+Review `setup/.env` and update the environment variables, target Prividium chain and API endpoints, application client name, and related settings as needed. `setup/.env.example` provides the default template.
+
+Run the setup script with:
 
 ```sh
-# Company name
-VITE_COMPANY_NAME="Matter Labs"
-# Accent color (hex)
-VITE_ACCENT_COLOR="#3a00adff"
-# Company icon (from https://heroicons.com/)
-VITE_COMPANY_ICON="ArrowPathRoundedSquareIcon"
+pnpm run setup
 ```
+
+The script outputs deployment progress in the terminal. Contract addresses are written to `config/contracts.json`.
+
+The script also synchronizes contract addresses to the `.env` files in the `web-app/` and `backend/` directories.
+
+At the end of the setup, the script prints the command required to restart the affected containers.
+
+### 6. Restart API Docker containers
+
+Restart the API Docker containers to pick up the configuration changes made during contract deployment.
+
+```bash
+docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate bundler-l2a bundler-l2b permissions-api-l2a permissions-api-l2b
+```
+
+### 7. Start the backend service
+
+The backend service (in `./backend`) provides endpoints for SSO smart account deployment from the web app (in `./web-app`) and invoice retrieval.
+
+To start the backend service run:
+
+```sh
+pnpm dev:backend
+```
+
+### 8. Start the web application
+
+The web app (in `./web-app`) is a Vue.js application that allows users to create and pay invoices across different chains.
+
+To start the web app run:
+
+```sh
+pnpm dev:web-app
+```
+
+> [!IMPORTANT]
+> Start the web app and backend services in separate terminals.
+
+### 9. Access the application
+
+Navigate to [http://localhost:5000](http://localhost:5000) and sign in with a Prividium user account (for example, `user@local.dev` / `password`). Register a passkey-based account, then use the application to create and pay invoices.
+
+Use two different browser profiles to authenticate in different chains (using different accounts) to simulate usage between two different entities.
 
 ## Repository Structure
 
-- [`setup/`](./setup): Setup scripts to deploy contracts and configure permissions for the sample counter contract in the ZKsync Prividium™ ecosystem. Can be easily extended to support multiple contracts.
-- [`contracts/`](./contracts): A basic Foundry-based project with a sample counter contract. You can add other contracts here.
+- [`setup/`](./setup): Setup scripts to deploy contracts and configure permissions in the ZKsync Prividium™ ecosystem.
+- [`contracts/`](./contracts): A Foundry-based project with the smart contracts for tokens and invoices.
 - [`backend/`](./backend): A Node.js backend service necessary for ZKsync SSO Smart Account deployment and interop transactions.
-- [`web-app/`](./web-app): A Vue 3 + TypeScript frontend demonstrating Prividium authentication and secure RPC proxying to interact with smart contracts.
+- [`web-app/`](./web-app): A Vue 3 + TypeScript frontend demonstrating Prividium authentication and a cross-chain invoicing workflow.
 
 ## Configuration Source of Truth
 
@@ -51,136 +123,18 @@ If you need to refresh env files from the canonical config, run:
 pnpm -C setup refresh:env
 ```
 
-## Requirements
+## Branding and style customization
 
-### System requirements
-
-- Node.js v22.10.0 or higher
-- pnpm v9.16.1 or higher
-- Foundry v1.0.0 or higher
-- Docker
-
-### Prividium base chain
-
-This project requires a target ZKsync Prividium™ chain to connect to. You can either run a local Prividium instance following the instructions in the [local Prividium repo](https://github.com/matter-labs/local-prividium) (requires access to private Docker registry) or use a remote Prividium instance.
-
-> [!NOTE]
-> Make sure the Prividium chain is running with the Bundler service enabled. It requires configuring the permissions API with the following environment variables:
+The web app can be easily updated to use different branding by updating the following environment variables in the `web-app/.env` file:
 
 ```sh
-# Bundler (ERC-4337) Configuration
-# Set BUNDLER_ENABLED=true to enable bundler RPC methods
-BUNDLER_ENABLED=true
-BUNDLER_RPC_URL=http://localhost:4337
-
+# Company name
+VITE_COMPANY_NAME="Matter Labs"
+# Accent color (hex)
+VITE_ACCENT_COLOR="#3a00adff"
+# Company icon (from https://heroicons.com/)
+VITE_COMPANY_ICON="ArrowPathRoundedSquareIcon"
 ```
-
-## Quick Start
-
-> [!IMPORTANT]
-> You need to have a Prividium base chain running with the Bundler service enabled. See the [Prividium base chain](#prividium-base-chain) section for more information.
-
-### 1. Install Dependencies
-
-This project uses `pnpm` workspaces. Install everything from the root:
-
-```bash
-pnpm install
-```
-
-### 2. Compile app contracts
-
-Compile the app contracts (e.g. Counter) with:
-
-```bash
-pnpm --filter contracts build
-```
-
-### 3. Pre-deploy contracts and permissions
-
-The setup script deploys the SSO smart contracts (beacon, factory and account implementation) and configures permissions for the SSO contracts. It also creates the app client via the Prividium API and deploys the app specific contracts (e.g. Counter). Finally, it configures permissions for the app specific contracts.
-
-Configure the `.env` file in the `setup/` directory with the required env vars and endpoints to your target Prividium chain and API, app client name etc. See the `setup/.env.example` as reference.
-
-Run the setup script with:
-
-```sh
-pnpm run setup
-```
-
-You'll see the progress of the deployment and app creation on the terminal. Contract addresses will be stored in `config/contracts.json`.
-
-Finally, the job synchronizes contract addresses to the `.env` files in the `web-app/` and `backend/` directories.
-
-### 4. SSO Smart Account Configuration
-
-As this demo uses ZKsync SSO smart accounts, the `DISPATCHER_SSO_BYTECODE_HASHES` and `DISPATCHER_SSO_IMPLEMENTATIONS` are required in the Prividium Permissions API. 
-
-Update the Permissions API `.env` file (or pass this values via Dockerfile) to include the following values. You can find both values in the `config/contracts.json` file, `accountImplementation` and `ssoBytecodeHash`.
-
-```sh
-# SSO Smart Account Dispatcher Configuration (optional)
-# Used for verifying smart account proxy contracts
-
-# SSO implementation contract address
-DISPATCHER_SSO_IMPLEMENTATIONS=0x998abeb3e57409262ae5b751f60747921b33613e
-# Calculated with cast keccak $(cast code SMART_ACCOUNT_ADDRESS --rpc-url http://localhost:5050)
-DISPATCHER_SSO_BYTECODE_HASHES=0x77a9210e5f94158c7e8f7e84e9601f427e8c1d5f09dfd434afd16314456b0a0f
-```
-
-> [!NOTE]
-> After updating the `.env` file for the permissions API, restart all Prividium services.
-
-### 5. Start Backend service
-
-The backend service (in `./backend`) provides different endpoints to allow the deployment of the SSO smart contract accounts from the web app (in `./web-app`). This service requires multiple environment variables like the Prividium endpoints (RPC, auth, api), the SSO contract addresses (factory, beacon, account implementation, webauthn validator, eoa validator, session validator, guardian executor, entry point). Configure them in the `backend/.env` file using the `env.exmaple` as a reference.
-
-To start the backend service run:
-
-```sh
-pnpm dev:backend
-```
-
-The backend service also enables interop transactions (optional and not used in this example app) via the the `L1_INTEROP_HANDLER` and `L2_INTEROP_CENTER` env variables.
-
-### 6. Start Web app
-
-The web app (in `./web-app`) is a Vue.js application that allows users to create Passkeys and deploy SSO smart contract accounts. It requires multiple environment variables like the Prividium endpoints (RPC, auth, api), and the Counter contract address. Configure them in the `web-app/.env` file using the `web-app/env.example` as a reference.
-
-To start the web app run:
-
-```sh
-pnpm dev:web-app
-```
-
-> [!IMPORTANT]
-> Start the web app and backend services in separate terminals.
-
-### 7. Use the app
-
-Navigate to [http://localhost:3002](http://localhost:3002) and log in with a Prividium user (e.g. user@local.dev / password)Create a new passkey and use the app to interact with the Counter contract using passkeys.
-
-
-## Global Scripts
-
-We provide several convenient scripts at the root level:
-
-- `pnpm build`: Builds all packages (Contracts & Web App).
-- `pnpm test`: Runs tests across the entire workspace.
-- `pnpm lint`: Runs Biome linter on all supported files.
-- `pnpm format`: Automatically formats the codebase using Biome and Forge.
-- `pnpm check`: Runs both linting and formatting verification.
-- `pnpm -C setup refresh:env`: Sync `.env` files from `config/contracts.json`.
-
-## Troubleshooting
-
-### Error `Details: Unknown dispatcher type`
-
-This error means that the SSO smart account dispatcher is not configured in the Prividium Permissions API. See the [Step 4](#step-4-sso-smart-account-configuration) in the Quick Start section for more information.
-
-### Error: `Untrusted smart account implementation Version`
-
-This error means that the SSO smart account implementation is not configured in the Prividium Permissions API is not correct. Most likely, the SSO bytecode hash is not correct. See the [Step 4](#step-4-sso-smart-account-configuration) in the Quick Start section for more information.
 
 ## License
 

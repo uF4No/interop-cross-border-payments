@@ -1,19 +1,155 @@
 {
+  "metadata": {
+    "generatedAt": "2026-03-30T14:44:25.782Z",
+    "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+  },
+  "chains": {
+    "a": {
+      "chainId": 6565,
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "tokens": {
+        "usdc": {
+          "address": "0x2e9BA742fBf1243a244b2698Ba81aB848482dBA5",
+          "assetId": "0xbcb8bb6eacaf6e6ce73a0efff5ed6c071402f80f8456ed43b43167d219ff0b8e",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "sgd": {
+          "address": "0x981Eb73cF5EA9d77F2199690b4DB84d1F33BC4C6",
+          "assetId": "0x04459ff2dc2d2d5bbcb4d81157f61bdba1e0007c4432a83accecfe866801c919",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "tbill": {
+          "address": "0xAedc2FF44510a494428572B1a7314bd8873E233e",
+          "assetId": "0xbc3dccb1681bf66526d92daf0095353a29af06bb12735f6cf5438fca956019f0",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        }
+      },
+      "rpcUrl": "http://localhost:3050",
+      "apiUrl": "http://localhost:8000/api",
+      "authBaseUrl": "http://localhost:3001",
+      "sso": {
+        "factory": "0x7a2088a1bfc9d81c55368ae168c2c02570cb814f",
+        "beacon": "0x4a679253410272dd5232b3ff7cf5dbb88f295319",
+        "accountImplementation": "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f",
+        "ssoBytecodeHash": "0x50582cb027a42cdd373c90debcddc998bfade442c9ff3277e86f034b9f38b191",
+        "webauthnValidator": "0x3aa5ebb10dc797cac828524e59a333d0a371443c",
+        "eoaValidator": "0xc6e7df5e7b4f2a278906862b61205850344d4e7d",
+        "sessionValidator": "0x59b670e9fa9d0a427751af201d676719a970857b",
+        "guardianExecutor": "0x4ed7c70f96b99c776995fb64377f0d4ab3b0e1c1",
+        "entryPoint": "0x322813fd9a801c5507c9de605d63cea4f2ce6c44"
+      },
+      "application": {
+        "id": "lwdwz1ES75dUZRJ-6TSle",
+        "name": "local-app",
+        "oauthClientId": "F98KnHV61iyCba3P",
+        "oauthRedirectUris": ["http://localhost:5000/auth-callback.html"],
+        "origin": "http://localhost:5000",
+        "createdAt": "2026-03-30T14:26:34.900Z",
+        "updatedAt": "2026-03-30T14:26:34.900Z"
+      }
+    },
+    "b": {
+      "chainId": 6566,
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "tokens": {
+        "usdc": {
+          "address": "0x2e9BA742fBf1243a244b2698Ba81aB848482dBA5",
+          "assetId": "0xbcb8bb6eacaf6e6ce73a0efff5ed6c071402f80f8456ed43b43167d219ff0b8e",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "sgd": {
+          "address": "0x981Eb73cF5EA9d77F2199690b4DB84d1F33BC4C6",
+          "assetId": "0x04459ff2dc2d2d5bbcb4d81157f61bdba1e0007c4432a83accecfe866801c919",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "tbill": {
+          "address": "0xAedc2FF44510a494428572B1a7314bd8873E233e",
+          "assetId": "0xbc3dccb1681bf66526d92daf0095353a29af06bb12735f6cf5438fca956019f0",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        }
+      },
+      "rpcUrl": "http://localhost:3051",
+      "apiUrl": "http://localhost:8300/api",
+      "authBaseUrl": "http://localhost:3301",
+      "sso": {
+        "factory": "0x610178da211fef7d417bc0e6fed39f05609ad788",
+        "beacon": "0x8a791620dd6260079bf849dc5567adc3f2fdc318",
+        "accountImplementation": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+        "ssoBytecodeHash": "0x2507a83344959ee8998c5bc82f0f77e04c603d6bd69382686ea978eb27c19af6",
+        "webauthnValidator": "0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9",
+        "eoaValidator": "0xdc64a140aa3e981100a9beca4e685f962f0cf6c9",
+        "sessionValidator": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+        "guardianExecutor": "0x0165878a594ca255338adfa4d48449f69242eb8f",
+        "entryPoint": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853"
+      },
+      "application": {
+        "id": "evCVcfEo-MZqCclSbowY9",
+        "name": "local-app",
+        "oauthClientId": "yOJST8sFP8O3ePgK",
+        "oauthRedirectUris": ["http://localhost:5000/auth-callback.html"],
+        "origin": "http://localhost:5000",
+        "createdAt": "2026-03-30T14:26:34.907Z",
+        "updatedAt": "2026-03-30T14:26:34.907Z"
+      }
+    },
+    "c": {
+      "chainId": 6567,
+      "interopCenter": "0x0000000000000000000000000000000000010010",
+      "nativeTokenVault": "0x0000000000000000000000000000000000010004",
+      "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "invoicePayment": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+      "tokens": {
+        "usdc": {
+          "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+          "assetId": "0xbcb8bb6eacaf6e6ce73a0efff5ed6c071402f80f8456ed43b43167d219ff0b8e",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "sgd": {
+          "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+          "assetId": "0x04459ff2dc2d2d5bbcb4d81157f61bdba1e0007c4432a83accecfe866801c919",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        },
+        "tbill": {
+          "address": "0x68B1D87F95878fE05B998F19b66F4baba5De1aed",
+          "assetId": "0xbc3dccb1681bf66526d92daf0095353a29af06bb12735f6cf5438fca956019f0",
+          "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+        }
+      },
+      "rpcUrl": "http://localhost:3052",
+      "apiUrl": "http://localhost:8600/api",
+      "authBaseUrl": "http://localhost:3601"
+    }
+  },
   "sso": {
-    "factory": "0x...",
-    "beacon": "0x...",
-    "accountImplementation": "0x...",
-    "webauthnValidator": "0x...",
-    "eoaValidator": "0x...",
-    "sessionValidator": "0x...",
-    "guardianExecutor": "0x...",
-    "entryPoint": "0x..."
+    "factory": "0x7a2088a1bfc9d81c55368ae168c2c02570cb814f",
+    "beacon": "0x4a679253410272dd5232b3ff7cf5dbb88f295319",
+    "accountImplementation": "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f",
+    "ssoBytecodeHash": "0x50582cb027a42cdd373c90debcddc998bfade442c9ff3277e86f034b9f38b191",
+    "webauthnValidator": "0x3aa5ebb10dc797cac828524e59a333d0a371443c",
+    "eoaValidator": "0xc6e7df5e7b4f2a278906862b61205850344d4e7d",
+    "sessionValidator": "0x59b670e9fa9d0a427751af201d676719a970857b",
+    "guardianExecutor": "0x4ed7c70f96b99c776995fb64377f0d4ab3b0e1c1",
+    "entryPoint": "0x322813fd9a801c5507c9de605d63cea4f2ce6c44"
   },
   "interop": {
-    "l1InteropHandler": "0x...",
-    "l2InteropCenter": "0x..."
-  },
-  "app": {
-    "counter": "0x..."
+    "l1InteropHandler": "0xB0dD4151fdcCaAC990F473533C15BcF8CE10b1de",
+    "l2InteropCenter": "0x0000000000000000000000000000000000010010"
   }
 }

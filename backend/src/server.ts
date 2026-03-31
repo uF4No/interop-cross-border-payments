@@ -9,13 +9,17 @@ import rateLimiter from '@/middleware/rateLimiter';
 import requestLogger from '@/middleware/requestLogger';
 
 import { deployAccountRouter } from './api/deployAccountRouter';
+import { directUserOpRouter } from './api/directUserOpRouter';
 import { faucetRouter } from './api/faucetRouter';
+import { fundTokensRouter } from './api/fundTokensRouter';
 import { healthCheckRouter } from './api/healthCheckRouter';
 import { interopTxRouter } from './api/interopTxRouter';
+import { invoicesRouter } from './api/invoicesRouter';
 import { statusRouter } from './api/statusRouter';
 import { ensureFactoryDeployed } from './utils/accounts/factory';
 import { TXNS_STATE_FOLDER } from './utils/constants';
 import { env } from './utils/envConfig';
+import { processInvoicePayouts } from './utils/payouts/processor';
 import { processQueue } from './utils/relayer/relayer';
 
 const logger = pino({ name: 'server start' });
@@ -37,9 +41,12 @@ app.use(requestLogger);
 // Routes
 app.use('/health-check', healthCheckRouter);
 app.use('/deploy-account', deployAccountRouter);
+app.use('/userops', directUserOpRouter);
 app.use('/faucet', faucetRouter);
+app.use('/fund-tokens', fundTokensRouter);
 app.use('/status', statusRouter);
 app.use('/new-l1-interop-tx', interopTxRouter);
+app.use('/invoices', invoicesRouter);
 
 // Error handlers
 app.use(errorHandler());
@@ -56,6 +63,12 @@ function startBackgroundWorker() {
       await processQueue();
     } catch (err) {
       logger.error({ err }, 'processQueue failed');
+    }
+
+    try {
+      await processInvoicePayouts();
+    } catch (err) {
+      logger.error({ err }, 'processInvoicePayouts failed');
     } finally {
       running = false;
     }

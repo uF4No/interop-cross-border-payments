@@ -1,11 +1,50 @@
 import { startAuthentication } from '@simplewebauthn/browser';
-import { type Address, type Hex, type PublicClient, hexToBytes, toHex } from 'viem';
+import { type Address, type Hex, type PublicClient, hexToBytes, pad, toHex } from 'viem';
 import { generatePasskeyAuthenticationOptions } from 'zksync-sso-stable/client/passkey';
 import { registerNewPasskey } from 'zksync-sso-stable/client/passkey';
-import { getPasskeySignatureFromPublicKeyBytes } from 'zksync-sso-stable/utils';
+import {
+  base64UrlToUint8Array,
+  getPasskeySignatureFromPublicKeyBytes,
+  getPublicKeyBytesFromPasskeySignature
+} from 'zksync-sso-stable/utils';
 
 import { RP_ID, STORAGE_KEY_ACCOUNT, STORAGE_KEY_PASSKEY, ssoContracts } from './constants';
 import type { PasskeyCredential } from './types';
+
+const ACCOUNT_STORAGE_EVENT = 'sso-account-storage-updated';
+const WORD32_ZERO = pad('0x0', { size: 32 }).toLowerCase();
+const WEBAUTHN_VALIDATOR_ABI = [
+  {
+    type: 'function',
+    name: 'getAccountList',
+    inputs: [
+      { name: 'domain', type: 'string' },
+      { name: 'credentialId', type: 'bytes' }
+    ],
+    outputs: [{ name: '', type: 'address[]' }],
+    stateMutability: 'view'
+  },
+  {
+    type: 'function',
+    name: 'getAccountKey',
+    inputs: [
+      { name: 'domain', type: 'string' },
+      { name: 'credentialId', type: 'bytes' },
+      { name: 'account', type: 'address' }
+    ],
+    outputs: [{ name: '', type: 'bytes32[2]' }],
+    stateMutability: 'view'
+  }
+] as const;
+const ACCOUNT_ENTRYPOINT_ABI = [
+  {
+    type: 'function',
+    name: 'entryPoint',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+    stateMutability: 'view'
+  }
+] as const;
 
 const base64UrlToBytes = (input: string): Uint8Array => {
   const base64 = input.replace(/-/g, '+').replace(/_/g, '/');
@@ -51,9 +90,78 @@ export async function createNewPasskey(userName: string) {
 
   console.log('✅ Passkey created successfully!');
 
-  // Store credentials
-  savePasskeyCredentials(passkeyCredentials);
   return passkeyCredentials;
+}
+
+function isHexCredentialId(value: string): value is Hex {
+  return /^0x[0-9a-fA-F]+$/.test(value) && value.length % 2 === 0;
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function normalizeWord32(value: Hex): string {
+  return pad(value, { size: 32 }).toLowerCase();
+}
+
+export function credentialIdToHex(credentialId: string): Hex {
+  if (isHexCredentialId(credentialId)) {
+    return credentialId.toLowerCase() as Hex;
+  }
+  return toHex(base64UrlToUint8Array(credentialId));
+}
+
+export function credentialIdToBase64Url(credentialId: string): string {
+  if (isHexCredentialId(credentialId)) {
+    return bytesToBase64Url(hexToBytes(credentialId));
+  }
+  return credentialId;
+}
+
+export async function assertPasskeyMatchesAccount(params: {
+  client: PublicClient;
+  webauthnValidator: Address;
+  accountAddress: Address;
+  passkeyCredentials: PasskeyCredential;
+  domain?: string;
+  fromAddress?: Address;
+}) {
+  const domain = params.domain ?? window.location.origin;
+  const credentialIdHex = credentialIdToHex(params.passkeyCredentials.credentialId);
+  const from = params.fromAddress ?? params.accountAddress;
+
+  const rawKey = (await params.client.readContract({
+    address: params.webauthnValidator,
+    abi: WEBAUTHN_VALIDATOR_ABI,
+    functionName: 'getAccountKey',
+    args: [domain, credentialIdHex, params.accountAddress],
+    account: from
+  })) as [Hex, Hex];
+
+  const onchainX = normalizeWord32(rawKey[0]);
+  const onchainY = normalizeWord32(rawKey[1]);
+  if (onchainX === WORD32_ZERO && onchainY === WORD32_ZERO) {
+    throw new Error(
+      `Passkey credential is not linked to account ${params.accountAddress} for origin ${domain}. Re-select your passkey for this account.`
+    );
+  }
+
+  const [localXBytes, localYBytes] = getPublicKeyBytesFromPasskeySignature(
+    new Uint8Array(params.passkeyCredentials.credentialPublicKey)
+  );
+  const localX = normalizeWord32(toHex(new Uint8Array(localXBytes)));
+  const localY = normalizeWord32(toHex(new Uint8Array(localYBytes)));
+
+  if (localX !== onchainX || localY !== onchainY) {
+    throw new Error(
+      `Saved passkey does not match on-chain key for account ${params.accountAddress}. Re-select the existing passkey before sending transactions.`
+    );
+  }
 }
 
 export async function selectExistingPasskey(
@@ -80,30 +188,6 @@ export async function selectExistingPasskey(
     from
   });
 
-  const WEBAUTHN_VALIDATOR_ABI = [
-    {
-      type: 'function',
-      name: 'getAccountList',
-      inputs: [
-        { name: 'domain', type: 'string' },
-        { name: 'credentialId', type: 'bytes' }
-      ],
-      outputs: [{ name: '', type: 'address[]' }],
-      stateMutability: 'view'
-    },
-    {
-      type: 'function',
-      name: 'getAccountKey',
-      inputs: [
-        { name: 'domain', type: 'string' },
-        { name: 'credentialId', type: 'bytes' },
-        { name: 'account', type: 'address' }
-      ],
-      outputs: [{ name: '', type: 'bytes32[2]' }],
-      stateMutability: 'view'
-    }
-  ] as const;
-
   const accounts = (await authClient.readContract({
     address: ssoContracts.webauthnValidator,
     abi: WEBAUTHN_VALIDATOR_ABI,
@@ -116,7 +200,23 @@ export async function selectExistingPasskey(
     throw new Error('No account found for selected passkey');
   }
 
-  const accountAddress = accounts[0];
+  const expectedEntryPoint = ssoContracts.entryPoint.toLowerCase();
+  let accountAddress: Address | null = null;
+
+  for (const candidate of accounts) {
+    const candidateEntryPoint = await readAccountEntryPoint(authClient, candidate);
+    if (candidateEntryPoint?.toLowerCase() === expectedEntryPoint) {
+      accountAddress = candidate;
+      break;
+    }
+  }
+
+  if (!accountAddress) {
+    throw new Error(
+      `No account found for this passkey on the configured EntryPoint (${ssoContracts.entryPoint}). Create a new passkey account.`
+    );
+  }
+
   const rawKey = (await authClient.readContract({
     address: ssoContracts.webauthnValidator,
     abi: WEBAUTHN_VALIDATOR_ABI,
@@ -157,11 +257,36 @@ export async function selectExistingPasskey(
 // Save passkey to localStorage
 export function savePasskeyCredentials(passkeyCredentials: PasskeyCredential) {
   localStorage.setItem(STORAGE_KEY_PASSKEY, JSON.stringify(passkeyCredentials));
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
 }
 
 // Save wallet address to localStorage
 export function saveAccountAddress(accountAddress: Address) {
   localStorage.setItem(STORAGE_KEY_ACCOUNT, accountAddress);
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
+}
+
+export function clearSavedAccountAddress() {
+  localStorage.removeItem(STORAGE_KEY_ACCOUNT);
+  window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
+}
+
+export async function readAccountEntryPoint(
+  client: PublicClient,
+  accountAddress: Address,
+  fromAddress?: Address
+): Promise<Address | null> {
+  try {
+    const entryPoint = (await client.readContract({
+      address: accountAddress,
+      abi: ACCOUNT_ENTRYPOINT_ABI,
+      functionName: 'entryPoint',
+      account: fromAddress ?? accountAddress
+    })) as Address;
+    return entryPoint;
+  } catch (_error) {
+    return null;
+  }
 }
 
 // Reset passkey
@@ -173,6 +298,7 @@ export function handleResetPasskey() {
   ) {
     localStorage.removeItem(STORAGE_KEY_PASSKEY);
     localStorage.removeItem(STORAGE_KEY_ACCOUNT);
+    window.dispatchEvent(new Event(ACCOUNT_STORAGE_EVENT));
     location.reload();
   }
 }

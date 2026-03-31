@@ -1,4 +1,4 @@
-import { client } from '../client';
+import { getChainScopedClients } from '../client';
 import { finalizeTx } from './finalize';
 import { extractTxMetadata } from './metadata';
 import { loadFinalizedTxs, loadPendingTxs, saveFinalizedTxs, savePendingTxs } from './state';
@@ -35,6 +35,7 @@ export async function processQueue() {
       // Backfill metadata for old transactions that don't have it
       if (!tx.action || !tx.amount) {
         try {
+          const { client } = getChainScopedClients(tx.sourceChainId);
           const receipt = await client.zks.getReceiptWithL2ToL1(tx.hash);
           if (receipt) {
             const metadata = await extractTxMetadata(receipt);
@@ -51,7 +52,7 @@ export async function processQueue() {
         }
       }
 
-      const result = await finalizeTx(tx.hash, tx.accountAddress);
+      const result = await finalizeTx(tx.hash, tx.accountAddress, tx.sourceChainId);
 
       if (result.success) {
         console.log(`✅ Removed from queue: ${tx.hash}`);
@@ -61,7 +62,8 @@ export async function processQueue() {
           finalizedAt: new Date().toISOString(),
           action: tx.action,
           amount: tx.amount,
-          accountAddress: result.accountAddress
+          accountAddress: result.accountAddress,
+          sourceChainId: tx.sourceChainId
         });
       } else if (
         result.reason === 'proof_not_ready' ||

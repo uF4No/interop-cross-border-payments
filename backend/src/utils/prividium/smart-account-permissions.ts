@@ -28,8 +28,13 @@ type ContractRecord = {
   contractAddress: string;
 };
 
-function buildApiUrl(path: string) {
-  const base = env.PRIVIDIUM_API_URL.replace(/\/+$/, '');
+type PermissionOptions = {
+  apiUrl?: string;
+  authToken?: string;
+};
+
+function buildApiUrl(path: string, apiUrl = env.PRIVIDIUM_API_URL) {
+  const base = apiUrl.replace(/\/+$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${base}${normalizedPath}`;
 }
@@ -109,11 +114,12 @@ function formatFunctionSignatureForApi(abiItem: AbiFunction): string {
 
 async function ensureContractRegistered(
   token: string,
-  contractAddress: Hex
+  contractAddress: Hex,
+  apiUrl?: string
 ): Promise<ContractRecord | null> {
   const { abi } = getModularSmartAccountArtifact();
 
-  const createResponse = await fetch(buildApiUrl('/contracts/'), {
+  const createResponse = await fetch(buildApiUrl('/contracts/', apiUrl), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -135,7 +141,7 @@ async function ensureContractRegistered(
   }
 
   const existingResponse = await fetch(
-    buildApiUrl(`/contracts/${encodeURIComponent(contractAddress)}`),
+    buildApiUrl(`/contracts/${encodeURIComponent(contractAddress)}`, apiUrl),
     {
       method: 'GET',
       headers: {
@@ -155,9 +161,12 @@ async function ensureContractRegistered(
   );
 }
 
-export async function configureSmartAccountPermissions(contractAddress: Hex) {
-  const token = await getPrividiumAuthToken();
-  const contract = await ensureContractRegistered(token, contractAddress);
+export async function configureSmartAccountPermissions(
+  contractAddress: Hex,
+  options?: PermissionOptions
+) {
+  const token = options?.authToken ?? (await getPrividiumAuthToken());
+  const contract = await ensureContractRegistered(token, contractAddress, options?.apiUrl);
   const targetAddress = (contract?.contractAddress || contractAddress) as Hex;
   const { functions } = getModularSmartAccountArtifact();
 
@@ -168,7 +177,7 @@ export async function configureSmartAccountPermissions(contractAddress: Hex) {
     const functionSignature = formatFunctionSignatureForApi(abiItem);
     const methodSelector = toFunctionSelector(selectorSignature);
 
-    const response = await fetch(buildApiUrl('/contract-permissions/'), {
+    const response = await fetch(buildApiUrl('/contract-permissions/', options?.apiUrl), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,

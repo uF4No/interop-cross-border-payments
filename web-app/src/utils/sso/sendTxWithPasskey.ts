@@ -4,16 +4,14 @@ import {
   type PublicClient,
   concat,
   encodeAbiParameters,
-  keccak256,
   pad,
-  parseAbiParameters,
-  toBytes,
   toHex
 } from 'viem';
-import { requestPasskeyAuthentication } from 'zksync-sso-stable/client/passkey';
-import { base64UrlToUint8Array, unwrapEC2Signature } from 'zksync-sso-stable/utils';
 
-import { ssoChain, ssoContracts } from './constants';
+import { ssoContracts } from './constants';
+import { assertPasskeyMatchesAccount, savePasskeyCredentials } from './passkeys';
+import { assertPasskeyUserOpSignatureValid, signUserOpWithPasskey } from './signUserOpWithPasskey';
+import { submitUserOpWithFallback } from './submitUserOpWithFallback';
 import type { PasskeyCredential } from './types';
 
 // NOTE: this method will be replaced with a much simpler implementation
@@ -83,6 +81,29 @@ export async function sendTxWithPasskey(
       ],
       outputs: [{ name: 'nonce', type: 'uint256' }],
       stateMutability: 'view'
+    },
+    {
+      type: 'function',
+      name: 'getUserOpHash',
+      inputs: [
+        {
+          components: [
+            { name: 'sender', type: 'address' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'initCode', type: 'bytes' },
+            { name: 'callData', type: 'bytes' },
+            { name: 'accountGasLimits', type: 'bytes32' },
+            { name: 'preVerificationGas', type: 'uint256' },
+            { name: 'gasFees', type: 'bytes32' },
+            { name: 'paymasterAndData', type: 'bytes' },
+            { name: 'signature', type: 'bytes' }
+          ],
+          name: 'userOp',
+          type: 'tuple'
+        }
+      ],
+      outputs: [{ name: 'hash', type: 'bytes32' }],
+      stateMutability: 'view'
     }
   ];
 
@@ -121,88 +142,45 @@ export async function sendTxWithPasskey(
     signature: '0x' as Hex
   };
 
-  // Calculate UserOperation hash manually using EIP-712 for v0.8
-  const PACKED_USEROP_TYPEHASH =
-    '0x29a0bca4af4be3421398da00295e58e6d7de38cb492214754cb6a47507dd6f8e';
-
-  // EIP-712 domain separator - use toBytes for proper string encoding
-  const domainTypeHash = '0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f';
-  const nameHash = keccak256(toBytes('ERC4337'));
-  const versionHash = keccak256(toBytes('1'));
-
-  const domainSeparator = keccak256(
-    encodeAbiParameters(parseAbiParameters('bytes32,bytes32,bytes32,uint256,address'), [
-      domainTypeHash,
-      nameHash,
-      versionHash,
-      BigInt(ssoChain.id),
-      ssoContracts.entryPoint
-    ])
-  );
-
-  // Hash the PackedUserOperation struct
-  const structHash = keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32,address,uint256,bytes32,bytes32,bytes32,uint256,bytes32,bytes32'),
-      [
-        PACKED_USEROP_TYPEHASH,
-        packedUserOp.sender,
-        packedUserOp.nonce,
-        keccak256(packedUserOp.initCode),
-        keccak256(packedUserOp.callData),
-        packedUserOp.accountGasLimits,
-        packedUserOp.preVerificationGas,
-        packedUserOp.gasFees,
-        keccak256(packedUserOp.paymasterAndData)
-      ]
-    )
-  );
-
-  // Final EIP-712 hash
-  const userOpHash = keccak256(concat(['0x1901', domainSeparator, structHash]));
+  // Derive the hash exactly as EntryPoint computes it on-chain.
+  const userOpHash = (await readClient.readContract({
+    address: ssoContracts.entryPoint,
+    abi: ENTRYPOINT_ABI,
+    functionName: 'getUserOpHash',
+    args: [packedUserOp],
+    account: accountAddress
+  })) as Hex;
 
   console.log('🔐 Requesting passkey authentication...');
-
-  // Sign with passkey
-  const passkeySignature = await requestPasskeyAuthentication({
-    challenge: userOpHash,
-    credentialPublicKey: new Uint8Array(passkeyCredentials.credentialPublicKey)
+  const signed = await signUserOpWithPasskey({
+    hash: userOpHash,
+    credentialId: passkeyCredentials.credentialId,
+    validatorAddress: ssoContracts.webauthnValidator,
+    rpId: window.location.hostname,
+    origin: window.location.origin
   });
+  packedUserOp.signature = signed.signature;
 
-  // Parse signature using SDK utilities
-  const response = passkeySignature.passkeyAuthenticationResponse.response;
-
-  // Decode base64url encoded data
-  const authenticatorDataHex = toHex(base64UrlToUint8Array(response.authenticatorData));
-  const credentialIdHex = toHex(
-    base64UrlToUint8Array(passkeySignature.passkeyAuthenticationResponse.id)
-  );
-
-  // Parse DER signature using SDK's unwrapEC2Signature
-  const signatureData = unwrapEC2Signature(base64UrlToUint8Array(response.signature));
-
-  // Ensure r and s are exactly 32 bytes (left-padded with zeros if needed)
-  const r = pad(toHex(signatureData.r), { size: 32 });
-  const s = pad(toHex(signatureData.s), { size: 32 });
-
-  // Encode signature for ERC-4337 bundler (matching test format)
-  const passkeySignatureEncoded = encodeAbiParameters(
-    [
-      { type: 'bytes' }, // authenticatorData
-      { type: 'string' }, // clientDataJSON
-      { type: 'bytes32[2]' }, // r and s as array
-      { type: 'bytes' } // credentialId
-    ],
-    [
-      authenticatorDataHex,
-      new TextDecoder().decode(base64UrlToUint8Array(response.clientDataJSON)),
-      [r, s],
-      credentialIdHex
-    ]
-  );
-
-  // Prepend validator address (ERC-4337 format)
-  packedUserOp.signature = concat([ssoContracts.webauthnValidator, passkeySignatureEncoded]);
+  if (signed.credentialId !== signed.expectedCredentialId) {
+    const refreshedCredentials = {
+      ...passkeyCredentials,
+      credentialId: signed.credentialId
+    };
+    await assertPasskeyMatchesAccount({
+      client: readClient,
+      webauthnValidator: ssoContracts.webauthnValidator,
+      accountAddress,
+      passkeyCredentials: refreshedCredentials
+    });
+    savePasskeyCredentials(refreshedCredentials);
+  }
+  await assertPasskeyUserOpSignatureValid({
+    client: readClient,
+    validatorAddress: ssoContracts.webauthnValidator,
+    accountAddress,
+    userOpHash,
+    signature: packedUserOp.signature
+  });
 
   console.log('📤 Submitting UserOperation via Prividium RPC...');
 
@@ -225,42 +203,15 @@ export async function sendTxWithPasskey(
     signature: packedUserOp.signature
   };
 
-  type RpcRequestArgs = { method: string; params?: unknown[] };
-  const rpcRequest = readClient.request as unknown as (args: RpcRequestArgs) => Promise<unknown>;
-
-  // Submit to bundler (v0.8 RPC format)
-  const userOpHashFromBundler = (await rpcRequest({
-    method: 'eth_sendUserOperation',
-    params: [userOpForBundler, ssoContracts.entryPoint]
-  })) as `0x${string}`;
-  console.log(`UserOperation submitted: ${userOpHashFromBundler}`);
   console.log('⏳ Waiting for confirmation...');
-
-  // Poll for receipt
-  type UserOpReceipt = { success: boolean; receipt: { transactionHash: `0x${string}` } };
-  let receipt: UserOpReceipt | null = null;
-  for (let i = 0; i < 30; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const receiptResult = await rpcRequest({
-      method: 'eth_getUserOperationReceipt',
-      params: [userOpHashFromBundler]
-    });
-
-    if (receiptResult) {
-      receipt = receiptResult as UserOpReceipt;
-      break;
-    }
-  }
-
-  if (!receipt) {
-    throw new Error('Transaction timeout - could not get receipt');
-  }
-
-  if (receipt.success) {
-    console.log('RECEIPT:', receipt);
-    console.log('✅ Transfer successful!');
-    return receipt.receipt.transactionHash;
-  }
-  throw new Error('Transaction failed');
+  const submission = await submitUserOpWithFallback({
+    readClient,
+    chainId: Number(readClient.chain?.id ?? 0),
+    entryPoint: ssoContracts.entryPoint,
+    userOp: userOpForBundler
+  });
+  const transactionHash = submission.txHash;
+  console.log(`Source transaction confirmed: ${transactionHash}`);
+  console.log('✅ Transfer successful!');
+  return transactionHash;
 }

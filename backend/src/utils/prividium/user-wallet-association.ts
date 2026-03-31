@@ -15,8 +15,13 @@ type UpdateUserWalletsPayload = {
   wallets: string[];
 };
 
-function buildApiUrl(path: string) {
-  const base = env.PRIVIDIUM_API_URL.replace(/\/+$/, '');
+type AssociationOptions = {
+  apiUrl?: string;
+  authToken?: string;
+};
+
+function buildApiUrl(path: string, apiUrl = env.PRIVIDIUM_API_URL) {
+  const base = apiUrl.replace(/\/+$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${base}${normalizedPath}`;
 }
@@ -25,9 +30,13 @@ function normalizeAddress(address: string): string {
   return address.toLowerCase();
 }
 
-export async function associateWalletWithUser(userId: string, walletAddress: Hex) {
-  const token = await getPrividiumAuthToken();
-  const userUrl = buildApiUrl(`/users/${encodeURIComponent(userId)}`);
+export async function associateWalletWithUser(
+  userId: string,
+  walletAddress: Hex,
+  options?: AssociationOptions
+) {
+  const token = options?.authToken ?? (await getPrividiumAuthToken());
+  const userUrl = buildApiUrl(`/users/${encodeURIComponent(userId)}`, options?.apiUrl);
 
   const getResponse = await fetch(userUrl, {
     method: 'GET',

@@ -1,12 +1,40 @@
 import { createViemClient } from '@matterlabs/zksync-js/viem/client';
 import { createViemSdk } from '@matterlabs/zksync-js/viem/sdk';
-import { http, type Transport, createPublicClient, createWalletClient } from 'viem';
+import { http, type Hex, createPublicClient, createWalletClient, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
-import { L1_RPC_URL, L2_RPC_URL, l2Chain } from './constants';
+
+import { L1_RPC_URL, L2_CHAIN_ID, L2_RPC_URL, l2Chain } from './constants';
+import { getChainDeploymentById, loadContractsConfig } from './contractsConfig';
 import { env } from './envConfig';
 
 const EXECUTOR_PRIVATE_KEY = env.EXECUTOR_PRIVATE_KEY as `0x${string}`;
+const AUTH_COOLDOWN_MS = 30000;
+const TOKEN_EXPIRY_BUFFER_MS = 30000;
+const DEFAULT_AUTH_BASE_URL = 'http://localhost:3001';
+
+type ChainScopedRuntime = {
+  chainId: number;
+  rpcUrl: string;
+  apiUrl: string;
+  authBaseUrl?: string;
+  name: string;
+};
+
+type AuthState = {
+  token: string | null;
+  tokenExpiry: number;
+  authInFlight: Promise<string> | null;
+  authCooldownUntil: number;
+};
+
+type ChainScopedClients = {
+  runtime: ChainScopedRuntime;
+  client: ReturnType<typeof createViemClient>;
+  sdk: ReturnType<typeof createViemSdk>;
+};
+
+const contractsConfig = loadContractsConfig();
 
 if (!EXECUTOR_PRIVATE_KEY) {
   console.error('❌ EXECUTOR_PRIVATE_KEY not found in .env file');
@@ -15,68 +43,140 @@ if (!EXECUTOR_PRIVATE_KEY) {
 
 export const executorAccount = privateKeyToAccount(EXECUTOR_PRIVATE_KEY);
 
-// --- Auth Handling ---
-let authToken: string | null = null;
-let tokenExpiry = 0;
-let authInFlight: Promise<string> | null = null;
-let authCooldownUntil = 0;
-const AUTH_COOLDOWN_MS = 30000;
+const l1 = createPublicClient({
+  chain: sepolia,
+  transport: http(L1_RPC_URL)
+});
 
-async function getAuthToken(): Promise<string> {
-  if (authInFlight) return authInFlight;
-  if (Date.now() < authCooldownUntil) {
-    throw new Error('Auth is in cooldown after a failure. Retry shortly.');
+export const l1Wallet = createWalletClient({
+  account: executorAccount,
+  chain: sepolia,
+  transport: http(L1_RPC_URL)
+});
+
+const authStateByKey = new Map<string, AuthState>();
+const chainScopedClientsByChainId = new Map<number, ChainScopedClients>();
+
+function getAuthState(cacheKey: string): AuthState {
+  const existing = authStateByKey.get(cacheKey);
+  if (existing) {
+    return existing;
   }
-  // If token is valid (with 30s buffer), return it
-  if (authToken && Date.now() < tokenExpiry - 30000) {
-    return authToken;
+
+  const initialState: AuthState = {
+    token: null,
+    tokenExpiry: 0,
+    authInFlight: null,
+    authCooldownUntil: 0
+  };
+  authStateByKey.set(cacheKey, initialState);
+  return initialState;
+}
+
+function resolveConfiguredRuntime(chainId: number): ChainScopedRuntime | null {
+  const configured = getChainDeploymentById(contractsConfig, chainId);
+  if (configured?.deployment.rpcUrl && configured.deployment.apiUrl) {
+    return {
+      chainId,
+      rpcUrl: configured.deployment.rpcUrl,
+      apiUrl: configured.deployment.apiUrl,
+      authBaseUrl: configured.deployment.authBaseUrl,
+      name: `Prividium Chain ${configured.key.toUpperCase()}`
+    };
   }
 
-  console.log('🔄 Authenticating with Prividium...');
+  const chainEnvCandidates = [
+    {
+      ids: [env.CHAIN_A_CHAIN_ID, env.PRIVIDIUM_CHAIN_A_ID],
+      rpcUrl: env.CHAIN_A_RPC_URL,
+      apiUrl: env.CHAIN_A_API_URL,
+      authBaseUrl: env.CHAIN_A_AUTH_BASE_URL,
+      name: 'Prividium Chain A'
+    },
+    {
+      ids: [env.CHAIN_B_CHAIN_ID, env.PRIVIDIUM_CHAIN_B_ID],
+      rpcUrl: env.CHAIN_B_RPC_URL,
+      apiUrl: env.CHAIN_B_API_URL,
+      authBaseUrl: env.CHAIN_B_AUTH_BASE_URL,
+      name: 'Prividium Chain B'
+    },
+    {
+      ids: [env.CHAIN_C_CHAIN_ID, env.PRIVIDIUM_CHAIN_C_ID],
+      rpcUrl: env.CHAIN_C_RPC_URL,
+      apiUrl: env.CHAIN_C_API_URL,
+      authBaseUrl: env.CHAIN_C_AUTH_BASE_URL,
+      name: 'Prividium Chain C'
+    }
+  ];
 
-  // 1. Get Challenge
-  // The RPC URL usually has a corresponding API, usually at port 8000 or similar if local.
-  // The user says "L2 RPC is a Prividium cli proxy... http://127.0.0.1:24101/rpc".
-  // The Prividium API itself is likely at http://localhost:8000 based on previous context/README.
-  // We'll try to deduce the API URL or use a known one.
-  // For local proxy, usually the proxy *IS* the gateway, but for SIWE we need the actual Admin/Auth API.
-  // Let's assume the Auth API is reachable. The README says: "npx prividium proxy -r http://localhost:8000 -u http://localhost:3001".
-  // So the API is likely http://localhost:8000.
-  // Let's rely on an env var or fallback.
-  // BUT: The proxy forwards requests. If we use the proxy URL (127.0.0.1:24101) for RPC, we still need a token?
-  // Actually, if using the proxy, the proxy *handles* auth if it's the *local* proxy for *humans*.
-  // BUT the logs say "Unauthorized". This means the proxy might be expecting a token if we are hitting it programmatically?
-  // OR we are hitting the node directly?
-  // The logs show: URL: http://127.0.0.1:24101/rpc
-  // The User Guide says: "Deployment Method 1: Local Proxy (Recommended for Humans)... npx prividium proxy... which handles auth automatically".
-  // If the proxy handles auth automatically, why are we getting 401?
-  // Ah, the proxy might only handle auth if we use the browser/wallet flow URL `.../rpc/wallet/<token>`.
-  // OR, maybe we are NOT supposed to use the proxy for the backend script?
-  // The guide says: "For standalone scripts... you CANNOT use the browser flow. You must use the Crypto-Native (SIWE) flow."
-  // And "Use Authorization: Bearer <token> headers with the standard endpoint."
+  for (const candidate of chainEnvCandidates) {
+    if (
+      candidate.ids.some((candidateId) => candidateId === chainId) &&
+      candidate.rpcUrl &&
+      candidate.apiUrl
+    ) {
+      return {
+        chainId,
+        rpcUrl: candidate.rpcUrl,
+        apiUrl: candidate.apiUrl,
+        authBaseUrl: candidate.authBaseUrl,
+        name: candidate.name
+      };
+    }
+  }
 
-  // So we should probably target the actual RPC endpoint with a token, or the Proxy *with* a token.
-  // Let's implement the SIWE flow and inject the token.
+  if (chainId === L2_CHAIN_ID || chainId === env.PRIVIDIUM_CHAIN_ID) {
+    return {
+      chainId,
+      rpcUrl: L2_RPC_URL,
+      apiUrl: env.PRIVIDIUM_API_URL,
+      authBaseUrl: env.PRIVIDIUM_AUTH_BASE_URL,
+      name: 'Prividium L2'
+    };
+  }
 
-  // URL to perform SIWE. Use backend env if set, fallback to VITE_* for convenience.
-  const AUTH_API_URL = env.PRIVIDIUM_API_URL;
+  return null;
+}
 
-  console.log(`Using Auth API: ${AUTH_API_URL}`);
+function resolveChainRuntime(chainId: number): ChainScopedRuntime {
+  const runtime = resolveConfiguredRuntime(chainId);
+  if (!runtime) {
+    throw new Error(`No chain-scoped backend runtime configured for source chain ${chainId}.`);
+  }
+
+  return runtime;
+}
+
+function buildApiUrl(baseUrl: string, path: string) {
+  return `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function getAuthTokenForRuntime(runtime: ChainScopedRuntime): Promise<string> {
+  const cacheKey = `${runtime.chainId}:${runtime.apiUrl}`;
+  const state = getAuthState(cacheKey);
+
+  if (state.authInFlight) {
+    return state.authInFlight;
+  }
+  if (Date.now() < state.authCooldownUntil) {
+    throw new Error(`Auth is in cooldown for chain ${runtime.chainId}. Retry shortly.`);
+  }
+  if (state.token && Date.now() < state.tokenExpiry - TOKEN_EXPIRY_BUFFER_MS) {
+    return state.token;
+  }
 
   const run = async () => {
     try {
-      // 1. Request Challenge
-      const authBaseUrl = env.PRIVIDIUM_AUTH_BASE_URL || env.CORS_ORIGIN || 'http://localhost:3001';
+      console.log(`🔄 Authenticating with Prividium for chain ${runtime.chainId}...`);
+
+      const authBaseUrl =
+        runtime.authBaseUrl ||
+        env.PRIVIDIUM_AUTH_BASE_URL ||
+        env.CORS_ORIGIN ||
+        DEFAULT_AUTH_BASE_URL;
       const authUrl = new URL(authBaseUrl);
       const siweDomain = env.SIWE_DOMAIN || authUrl.host;
       const siweUri = env.SIWE_URI || authUrl.origin;
-      console.log(`SIWE domain: ${siweDomain} | SIWE uri: ${siweUri}`);
-
-      const buildUrl = (path: string) =>
-        `${AUTH_API_URL.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
-
-      const challengePath = env.SIWE_CHALLENGE_PATH;
-      const loginPath = env.SIWE_LOGIN_PATH;
 
       const postJson = (url: string, body: Record<string, unknown>) =>
         fetch(url, {
@@ -85,8 +185,7 @@ async function getAuthToken(): Promise<string> {
           body: JSON.stringify(body)
         });
 
-      const challengeUrl = buildUrl(challengePath);
-      console.log(`SIWE challenge URL: ${challengeUrl}`);
+      const challengeUrl = buildApiUrl(runtime.apiUrl, env.SIWE_CHALLENGE_PATH);
       const challengeRes = await postJson(challengeUrl, {
         address: executorAccount.address,
         domain: siweDomain
@@ -98,95 +197,135 @@ async function getAuthToken(): Promise<string> {
           const retryAfter = Number(challengeRes.headers.get('retry-after'));
           const cooldownMs =
             Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : AUTH_COOLDOWN_MS;
-          authCooldownUntil = Date.now() + cooldownMs;
+          state.authCooldownUntil = Date.now() + cooldownMs;
         }
         throw new Error(
-          `Failed to get challenge: ${challengeRes.status} ${challengeRes.statusText} ${errorText}`
+          `Failed to get challenge for chain ${runtime.chainId}: ${challengeRes.status} ${challengeRes.statusText} ${errorText}`
         );
       }
+
       const challengeJson = await challengeRes.json();
-      console.log(`SIWE challenge response: ${JSON.stringify(challengeJson)}`);
       const message = challengeJson?.message || challengeJson?.msg;
       if (!message) {
         throw new Error(
-          `SIWE challenge missing message field. Response: ${JSON.stringify(challengeJson)}`
+          `SIWE challenge missing message field for chain ${runtime.chainId}. Response: ${JSON.stringify(challengeJson)}`
         );
       }
 
-      // 2. Sign Message
       const signature = await executorAccount.signMessage({ message });
 
-      // 3. Login
-      const loginUrl = buildUrl(loginPath);
-      console.log(`SIWE login URL: ${loginUrl}`);
+      const loginUrl = buildApiUrl(runtime.apiUrl, env.SIWE_LOGIN_PATH);
       const loginRes = await postJson(loginUrl, { message, signature });
 
       if (!loginRes.ok) {
         const errorText = await loginRes.text().catch(() => '');
-        throw new Error(`Failed to login: ${loginRes.status} ${loginRes.statusText} ${errorText}`);
+        throw new Error(
+          `Failed to login for chain ${runtime.chainId}: ${loginRes.status} ${loginRes.statusText} ${errorText}`
+        );
       }
+
       const { token, expiresAt } = await loginRes.json();
+      state.token = token;
+      state.tokenExpiry = expiresAt ? Date.parse(expiresAt) : Date.now() + 3600 * 1000;
 
-      authToken = token;
-      tokenExpiry = expiresAt ? Date.parse(expiresAt) : Date.now() + 3600 * 1000;
-
-      console.log('✅ Authenticated!');
-      return authToken as string;
+      console.log(`✅ Authenticated for chain ${runtime.chainId}`);
+      return token as string;
     } catch (error) {
-      console.error('Auth failed:', error);
-      authCooldownUntil = Date.now() + AUTH_COOLDOWN_MS;
+      console.error(`Auth failed for chain ${runtime.chainId}:`, error);
+      state.authCooldownUntil = Date.now() + AUTH_COOLDOWN_MS;
       throw error;
     } finally {
-      authInFlight = null;
+      state.authInFlight = null;
     }
   };
 
-  authInFlight = run();
-  return authInFlight;
+  state.authInFlight = run();
+  return state.authInFlight;
+}
+
+function createAuthenticatedFetch(runtime: ChainScopedRuntime): typeof fetch {
+  return async (url, init) => {
+    const token = await getAuthTokenForRuntime(runtime);
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
+  };
+}
+
+function createChainScopedClients(runtime: ChainScopedRuntime): ChainScopedClients {
+  const chain = defineChain({
+    id: runtime.chainId,
+    name: runtime.name,
+    nativeCurrency: {
+      name: 'Ether',
+      symbol: 'ETH',
+      decimals: 18
+    },
+    rpcUrls: {
+      default: { http: [runtime.rpcUrl] },
+      public: { http: [runtime.rpcUrl] }
+    }
+  });
+
+  const authenticatedFetch = createAuthenticatedFetch(runtime);
+  const l2 = createPublicClient({
+    chain,
+    transport: http(runtime.rpcUrl, {
+      fetchFn: authenticatedFetch
+    })
+  });
+
+  const l2Wallet = createWalletClient({
+    account: executorAccount,
+    transport: http(runtime.rpcUrl, {
+      fetchFn: authenticatedFetch
+    }),
+    chain
+  });
+
+  const chainScopedClient = createViemClient({ l1, l2, l1Wallet, l2Wallet });
+  const chainScopedSdk = createViemSdk(chainScopedClient);
+
+  return {
+    runtime,
+    client: chainScopedClient,
+    sdk: chainScopedSdk
+  };
+}
+
+export function getChainScopedClients(sourceChainId: number): ChainScopedClients {
+  const existing = chainScopedClientsByChainId.get(sourceChainId);
+  if (existing) {
+    return existing;
+  }
+
+  const runtime = resolveChainRuntime(sourceChainId);
+  const created = createChainScopedClients(runtime);
+  chainScopedClientsByChainId.set(sourceChainId, created);
+  return created;
 }
 
 export async function getPrividiumAuthToken(): Promise<string> {
-  return getAuthToken();
+  return getAuthTokenForRuntime(resolveChainRuntime(L2_CHAIN_ID));
 }
 
-// Custom Fetch Wrapper for Viem
-const authenticatedFetch: typeof fetch = async (url, init) => {
-  const token = await getAuthToken();
-  const headers = new Headers(init?.headers);
-  headers.set('Authorization', `Bearer ${token}`);
-  return fetch(url, { ...init, headers });
-};
+export async function getPrividiumAuthTokenForChain(sourceChainId: number): Promise<string> {
+  return getAuthTokenForRuntime(resolveChainRuntime(sourceChainId));
+}
 
-// Clients
-// For L1 (Sepolia), we don't need Prividium auth usually, unless it's a proxied L1?
-// Usually L1 is public. We'll leave L1 as is.
-const l1 = createPublicClient({
-  chain: sepolia,
-  transport: http(L1_RPC_URL)
-});
+const defaultChainScopedClients = getChainScopedClients(L2_CHAIN_ID);
 
-// For L2, we use authenticated transport
-const l2 = createPublicClient({
-  chain: l2Chain,
-  transport: http(L2_RPC_URL, {
-    fetchFn: authenticatedFetch
-  })
-});
-
-export const l1Wallet = createWalletClient({
-  account: executorAccount,
-  chain: sepolia,
-  transport: http(L1_RPC_URL)
-});
-
+export const client = defaultChainScopedClients.client;
+export const sdk = defaultChainScopedClients.sdk;
 export const l2Wallet = createWalletClient({
   account: executorAccount,
   transport: http(L2_RPC_URL, {
-    fetchFn: authenticatedFetch
+    fetchFn: createAuthenticatedFetch(resolveChainRuntime(L2_CHAIN_ID))
   }),
   chain: l2Chain
 });
 
-// Create ZKSync client
-export const client = createViemClient({ l1, l2, l1Wallet, l2Wallet });
-export const sdk = createViemSdk(client);
+export function clearAuthTokenCacheForTests() {
+  authStateByKey.clear();
+  chainScopedClientsByChainId.clear();
+}

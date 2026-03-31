@@ -7,7 +7,10 @@
   "scripts": {
     "build": "tsc && tsup",
     "dev": "node --import=tsx --watch src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "smoke:invoices": "tsx scripts/smoke-invoices.ts",
+    "smoke:deploy-account": "tsx scripts/smoke-deploy-account.ts",
+    "smoke": "pnpm smoke:invoices && pnpm smoke:deploy-account"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "7.3.4",

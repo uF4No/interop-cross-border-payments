@@ -10,6 +10,7 @@
       "contracts/lib",
       "contracts/out",
       "contracts/cache",
+      "prividium-3chain-local",
       "web-app/dist",
       "web-app/node_modules",
       "node_modules"

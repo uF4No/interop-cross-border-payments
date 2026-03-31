@@ -1,14 +1,9 @@
 import type { Abi } from 'abitype';
 import { formatAbiItem } from 'abitype';
 import { toFunctionSelector } from 'viem';
-import {
-  extractRes,
-  getContractByAddress,
-  getContractPermissions,
-  postContractPermissions,
-  postContracts
-} from '../tools/api-client';
+import { extractRes, getContractByAddress, getContractPermissions } from '../tools/api-client';
 import type { Client } from '../tools/create-admin-client';
+import { type PublicContractSpec, setupPublicContracts } from './public-contracts-setup';
 
 import EOAKeyValidatorArtifact from '../system/contracts/EOAKeyValidator.json';
 import EntryPointArtifact from '../system/contracts/EntryPoint.json';
@@ -19,13 +14,6 @@ import SessionKeyValidatorArtifact from '../system/contracts/SessionKeyValidator
 import UpgradeableBeaconArtifact from '../system/contracts/UpgradeableBeacon.json';
 import WebAuthnValidatorArtifact from '../system/contracts/WebAuthnValidator.json';
 
-type ContractSpec = {
-  name: string;
-  description: string;
-  address: `0x${string}`;
-  abi: Abi;
-};
-
 function buildSsoContracts(addresses: {
   eoaValidator?: `0x${string}`;
   webauthnValidator?: `0x${string}`;
@@ -35,7 +23,7 @@ function buildSsoContracts(addresses: {
   accountImplementation: `0x${string}`;
   beacon: `0x${string}`;
   factory: `0x${string}`;
-}): ContractSpec[] {
+}): PublicContractSpec[] {
   return [
     ...(addresses.webauthnValidator
       ? [
@@ -108,57 +96,7 @@ function buildSsoContracts(addresses: {
   ];
 }
 
-async function registerContract(adminApiClient: Client, contract: ContractSpec) {
-  const existingRes = await getContractByAddress(adminApiClient, contract.address);
-  const created =
-    existingRes.response.status === 404
-      ? extractRes(
-          await postContracts(adminApiClient, {
-            abi: JSON.stringify(contract.abi),
-            name: contract.name,
-            contractAddress: contract.address,
-            description: contract.description,
-            discloseBytecode: false,
-            discloseErc20Balance: false,
-            erc20LockAddresses: []
-          })
-        )
-      : extractRes(existingRes);
-
-  for (const abiItem of contract.abi) {
-    if (abiItem.type !== 'function') {
-      continue;
-    }
-
-    const methodSelector = toFunctionSelector(abiItem);
-    const existingPermission = extractRes(
-      await getContractPermissions(adminApiClient, {
-        contractAddress: created.contractAddress,
-        methodSelector,
-        limit: 1,
-        offset: 0
-      })
-    );
-    if (existingPermission.items.length > 0) {
-      continue;
-    }
-
-    extractRes(
-      await postContractPermissions(adminApiClient, {
-        contractAddress: created.contractAddress,
-        accessType:
-          abiItem.stateMutability === 'view' || abiItem.stateMutability === 'pure'
-            ? 'read'
-            : 'write',
-        argumentRestrictions: [],
-        roles: [],
-        functionSignature: formatAbiItem(abiItem),
-        methodSelector,
-        ruleType: 'public'
-      })
-    );
-  }
-}
+type ContractSpec = PublicContractSpec;
 
 export async function setupSsoContracts(
   adminApiClient: Client,
@@ -175,9 +113,7 @@ export async function setupSsoContracts(
 ) {
   const contracts = buildSsoContracts(addresses);
 
-  for (const contract of contracts) {
-    await registerContract(adminApiClient, contract);
-  }
+  await setupPublicContracts(adminApiClient, contracts);
 }
 
 export type SsoPermissionCheck = {

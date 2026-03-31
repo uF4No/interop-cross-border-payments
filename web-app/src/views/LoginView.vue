@@ -3,10 +3,15 @@ import { type Address, type Chain, type Transport, createPublicClient } from 'vi
 import { ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BaseIcon from '../components/BaseIcon.vue';
-import { usePrividium } from '../composables/usePrividium';
+import { getPrividiumBranding, usePrividium } from '../composables/usePrividium';
 import { useRpcClient } from '../composables/useRpcClient';
 import { DEPLOY_ACCOUNT_ENDPOINT } from '../utils/sso/constants';
-import { createNewPasskey, saveAccountAddress, selectExistingPasskey } from '../utils/sso/passkeys';
+import {
+  createNewPasskey,
+  saveAccountAddress,
+  savePasskeyCredentials,
+  selectExistingPasskey
+} from '../utils/sso/passkeys';
 
 const router = useRouter();
 const route = useRoute();
@@ -14,14 +19,18 @@ const {
   isAuthenticated,
   isAuthenticating,
   authError,
+  selectedChainKey,
   authenticate,
   getAuthHeaders,
   userProfile,
   refreshUserProfile,
   getChain,
-  getTransport
+  getTransport,
+  setSelectedChainKey
 } = usePrividium();
 const rpcClient = useRpcClient();
+const chainALabel = getPrividiumBranding('A').companyName;
+const chainBLabel = getPrividiumBranding('B').companyName;
 
 type UserWallet = { walletAddress: string };
 
@@ -68,6 +77,10 @@ async function redirectAfterAuth() {
 }
 
 async function continueToApp() {
+  if (completedAccountAddress.value?.startsWith('0x')) {
+    saveAccountAddress(completedAccountAddress.value as Address);
+  }
+  await refreshUserProfile();
   await redirectAfterAuth();
 }
 
@@ -95,6 +108,7 @@ const createPasskey = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        chainKey: selectedChainKey.value,
         userId,
         originDomain: window.location.origin,
         credentialId: creds.credentialId,
@@ -126,7 +140,8 @@ const createPasskey = async () => {
     }
     const accountAddressHex = accountAddress as `0x${string}`;
 
-    // 3. Save account and refresh the profile with linked wallets from backend.
+    // 3. Save passkey+account only after deploy/link succeeds, then refresh profile.
+    savePasskeyCredentials(creds);
     saveAccountAddress(accountAddressHex);
     await refreshUserProfile();
     completedAccountAddress.value = accountAddressHex;
@@ -433,6 +448,38 @@ const resetSetup = () => {
 
         <!-- STANDARD LOGIN STATE -->
         <div v-else class="space-y-6">
+          <div>
+            <p class="text-xs font-bold text-slate-700 uppercase tracking-wide mb-3">Login Chain</p>
+            <div class="inline-flex w-full rounded-2xl border border-slate-200 bg-slate-50 p-1">
+              <button
+                type="button"
+                @click="setSelectedChainKey('A')"
+                :disabled="isAuthenticating"
+                :class="[
+                  'flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                  selectedChainKey === 'A' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                  isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
+                ]"
+              >
+                {{ chainALabel }}
+              </button>
+              <button
+                type="button"
+                @click="setSelectedChainKey('B')"
+                :disabled="isAuthenticating"
+                :class="[
+                  'flex-1 rounded-xl px-4 py-2 text-sm font-semibold transition',
+                  selectedChainKey === 'B' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500',
+                  isAuthenticating ? 'opacity-60 cursor-not-allowed' : ''
+                ]"
+              >
+                {{ chainBLabel }}
+              </button>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">
+              Select the Prividium environment you want to authenticate against.
+            </p>
+          </div>
           <button 
             @click="login"
             class="enterprise-button-primary w-full py-4 text-base"

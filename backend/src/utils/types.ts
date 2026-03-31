@@ -10,6 +10,7 @@ export interface FinalizedTxnState extends Metadata {
   l1FinalizeTxHash: Hex;
   finalizedAt: string;
   accountAddress: Address;
+  sourceChainId: number;
 }
 
 export interface PendingTxnState extends Metadata {
@@ -19,6 +20,7 @@ export interface PendingTxnState extends Metadata {
   lastFinalizeHash?: Hex;
   updatedAt?: string;
   accountAddress: Address;
+  sourceChainId: number;
 }
 
 export interface InteropParams {
