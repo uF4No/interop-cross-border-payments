@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { Abi, Address, Hex, Transport } from 'viem';
-import { createPublicClient, createWalletClient, defineChain, http, keccak256 } from 'viem';
+import { http, createPublicClient, createWalletClient, defineChain, keccak256 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import EOAKeyValidatorArtifact from '../system/contracts/EOAKeyValidator.json';
@@ -358,9 +358,7 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
       }
       const implementationEntryPoint = await readAccountEntryPoint(implementation);
       if (!implementationEntryPoint) {
-        throw new Error(
-          `Beacon implementation ${implementation} does not expose entryPoint()`
-        );
+        throw new Error(`Beacon implementation ${implementation} does not expose entryPoint()`);
       }
       if (implementationEntryPoint.toLowerCase() !== expectedEntryPoint) {
         console.warn(
@@ -580,7 +578,9 @@ export async function deploySsoContracts(config: SsoDeployConfig): Promise<SsoDe
     }
 
     if (configured) {
-      console.warn(`⚠️ No code at configured EntryPoint address ${configured}. Deploying a new one.`);
+      console.warn(
+        `⚠️ No code at configured EntryPoint address ${configured}. Deploying a new one.`
+      );
     } else {
       console.log('⚠️ Missing configured EntryPoint. Deploying a new EntryPoint contract.');
     }

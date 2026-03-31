@@ -1,18 +1,26 @@
 import {
+  type Address,
+  type Hex,
   concatHex,
   encodeAbiParameters,
   getAddress,
   parseAbi,
-  toHex,
-  type Address,
-  type Hex
+  toHex
 } from 'viem';
 
 import { executorAccount, getChainScopedClients } from '../client';
-import { getChainDeploymentById, loadContractsConfig, type ChainDeployment } from '../contractsConfig';
+import {
+  type ChainDeployment,
+  getChainDeploymentById,
+  loadContractsConfig
+} from '../contractsConfig';
 import { addPendingTx, loadFinalizedTxs, loadPendingTxs } from '../relayer/state';
 
-import { loadInvoicePayoutStates, upsertInvoicePayoutState, type InvoicePayoutState } from './state';
+import {
+  type InvoicePayoutState,
+  loadInvoicePayoutStates,
+  upsertInvoicePayoutState
+} from './state';
 
 const contractsConfig = loadContractsConfig();
 const LOCAL_INTEROP_RELAY_ADDRESS = '0x36615Cf349d7F6344891B1e7CA7C72883F5dc049' as Address;
@@ -119,10 +127,35 @@ function resolveChainCDeployment(): ChainDeployment {
   return deployment;
 }
 
+function requireChainCRuntimeFields(chainC: ChainDeployment) {
+  const invoicePayment = chainC.invoicePayment ? getAddress(chainC.invoicePayment) : null;
+  const nativeTokenVault = chainC.nativeTokenVault ? getAddress(chainC.nativeTokenVault) : null;
+  const interopCenter = chainC.interopCenter ? getAddress(chainC.interopCenter) : null;
+
+  if (!invoicePayment || !nativeTokenVault || !interopCenter) {
+    throw new Error('Chain C config is missing required payout addresses.');
+  }
+
+  return { invoicePayment, nativeTokenVault, interopCenter };
+}
+
+function requireChainWalletClient(chainId: number) {
+  const { client } = getChainScopedClients(chainId);
+  if (!client.l2Wallet) {
+    throw new Error(`Missing L2 wallet client for chain ${chainId}`);
+  }
+
+  return client;
+}
+
 function resolveAssetIdForBillingToken(chainC: ChainDeployment, billingToken: Address): Hex {
   const tokens = chainC.tokens ?? {};
   for (const token of Object.values(tokens)) {
-    if (token?.address && token.assetId && token.address.toLowerCase() === billingToken.toLowerCase()) {
+    if (
+      token?.address &&
+      token.assetId &&
+      token.address.toLowerCase() === billingToken.toLowerCase()
+    ) {
       return token.assetId;
     }
   }
@@ -130,7 +163,10 @@ function resolveAssetIdForBillingToken(chainC: ChainDeployment, billingToken: Ad
   throw new Error(`Missing assetId for billing token ${billingToken} on chain C.`);
 }
 
-async function readAllInvoices(invoicePayment: Address, chainCChainId: number): Promise<InvoiceDetails[]> {
+async function readAllInvoices(
+  invoicePayment: Address,
+  chainCChainId: number
+): Promise<InvoiceDetails[]> {
   const { client: chainCClients } = getChainScopedClients(chainCChainId);
   const invoiceCount = (await chainCClients.l2.readContract({
     address: invoicePayment,
@@ -192,11 +228,15 @@ async function ensurePayoutReleased(
   chainCChainId: number
 ): Promise<void> {
   const existing = currentPayoutState(invoice.id);
-  if (existing?.status === 'released' || existing?.status === 'bridge_submitted' || existing?.status === 'completed') {
+  if (
+    existing?.status === 'released' ||
+    existing?.status === 'bridge_submitted' ||
+    existing?.status === 'completed'
+  ) {
     return;
   }
 
-  const { client: chainCClient } = getChainScopedClients(chainCChainId);
+  const chainCClient = requireChainWalletClient(chainCChainId);
   const alreadyReleased = (await chainCClient.l2.readContract({
     address: invoicePayment,
     abi: INVOICE_ABI,
@@ -217,7 +257,7 @@ async function ensurePayoutReleased(
     return;
   }
 
-  const txHash = await chainCClient.l2Wallet!.writeContract({
+  const txHash = await chainCClient.l2Wallet.writeContract({
     account: executorAccount,
     address: invoicePayment,
     abi: INVOICE_ABI,
@@ -229,7 +269,9 @@ async function ensurePayoutReleased(
     throw new Error(`triggerCreatorPayout reverted for invoice ${invoice.id.toString()}`);
   }
 
-  console.log(`[invoice-payout] released invoice ${invoice.id.toString()} to payout operator tx=${txHash}`);
+  console.log(
+    `[invoice-payout] released invoice ${invoice.id.toString()} to payout operator tx=${txHash}`
+  );
   upsertInvoicePayoutState({
     invoiceId: invoice.id.toString(),
     creatorChainId: Number(invoice.creatorChainId),
@@ -255,23 +297,24 @@ async function ensureBridgeSubmitted(
   getChainScopedClients(destinationChainId);
 
   const sourceChainId = Number(chainC.chainId);
+  const { nativeTokenVault, interopCenter } = requireChainCRuntimeFields(chainC);
   const assetId = resolveAssetIdForBillingToken(chainC, getAddress(invoice.billingToken));
-  const { client: chainCClient } = getChainScopedClients(sourceChainId);
+  const chainCClient = requireChainWalletClient(sourceChainId);
 
   const currentAllowance = (await chainCClient.l2.readContract({
     address: getAddress(invoice.billingToken),
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: [executorAccount.address, getAddress(chainC.nativeTokenVault!)]
+    args: [executorAccount.address, nativeTokenVault]
   })) as bigint;
 
   if (currentAllowance < invoice.amount) {
-    const approveTxHash = await chainCClient.l2Wallet!.writeContract({
+    const approveTxHash = await chainCClient.l2Wallet.writeContract({
       account: executorAccount,
       address: getAddress(invoice.billingToken),
       abi: ERC20_ABI,
       functionName: 'approve',
-      args: [getAddress(chainC.nativeTokenVault!), invoice.amount]
+      args: [nativeTokenVault, invoice.amount]
     });
     const approveReceipt = await chainCClient.l2.waitForTransactionReceipt({ hash: approveTxHash });
     if (approveReceipt.status !== 'success') {
@@ -281,7 +324,11 @@ async function ensureBridgeSubmitted(
 
   const burnData = encodeAbiParameters(
     [{ type: 'uint256' }, { type: 'address' }, { type: 'address' }],
-    [invoice.amount, getAddress(invoice.creatorRefundAddress), '0x0000000000000000000000000000000000000000']
+    [
+      invoice.amount,
+      getAddress(invoice.creatorRefundAddress),
+      '0x0000000000000000000000000000000000000000'
+    ]
   );
   const payload = concatHex([
     NEW_ENCODING_VERSION,
@@ -296,9 +343,9 @@ async function ensureBridgeSubmitted(
   ] as const;
   const bundleAttributes = [unbundlerAddressAttribute(LOCAL_INTEROP_RELAY_ADDRESS)] as const;
 
-  const bridgeTxHash = await chainCClient.l2Wallet!.writeContract({
+  const bridgeTxHash = await chainCClient.l2Wallet.writeContract({
     account: executorAccount,
-    address: getAddress(chainC.interopCenter!),
+    address: interopCenter,
     abi: INTEROP_CENTER_ABI,
     functionName: 'sendBundle',
     args: [formatEvmV1(BigInt(destinationChainId)), callStarters, bundleAttributes]
@@ -350,7 +397,7 @@ export async function processInvoicePayouts() {
 
   const chainC = resolveChainCDeployment();
   const chainCChainId = Number(chainC.chainId);
-  const invoicePayment = getAddress(chainC.invoicePayment!);
+  const { invoicePayment } = requireChainCRuntimeFields(chainC);
   const invoices = await readAllInvoices(invoicePayment, chainCChainId);
   const pendingByHash = new Set(loadPendingTxs().map((tx) => tx.hash.toLowerCase()));
 
@@ -378,10 +425,7 @@ export async function processInvoicePayouts() {
       await ensurePayoutReleased(invoicePayment, invoice, chainCChainId);
       await ensureBridgeSubmitted(chainC, invoice);
     } catch (error) {
-      console.error(
-        `[invoice-payout] failed for invoice ${invoice.id.toString()}:`,
-        error
-      );
+      console.error(`[invoice-payout] failed for invoice ${invoice.id.toString()}:`, error);
     }
   }
 }

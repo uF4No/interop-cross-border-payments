@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { formatUnits, getAddress, isAddress } from 'viem';
+import { computed } from 'vue';
 
-import BaseIcon from './BaseIcon.vue';
 import { useInvoices } from '../composables/useInvoices';
-import type {
-  InvoiceTableRelationshipFilter,
-  InvoiceTableStatusFilter
-} from '../types/invoices';
+import type { InvoiceTableRelationshipFilter, InvoiceTableStatusFilter } from '../types/invoices';
 import type { InvoiceRecord } from '../types/invoices';
+import BaseIcon from './BaseIcon.vue';
 
 const props = defineProps<{
   activeChainId: number;
@@ -62,7 +59,9 @@ const lastUpdatedLabel = computed(() =>
 );
 const showInitialLoadingState = computed(() => isLoading.value && !lastUpdatedAt.value);
 const showBlockingErrorState = computed(() => Boolean(errorMessage.value) && !lastUpdatedAt.value);
-const showInlineErrorNotice = computed(() => Boolean(errorMessage.value) && Boolean(lastUpdatedAt.value));
+const showInlineErrorNotice = computed(
+  () => Boolean(errorMessage.value) && Boolean(lastUpdatedAt.value)
+);
 
 const selectedRelationshipLabel = computed(
   () => relationshipFilterLabels[selectedRelationshipFilter.value]
@@ -91,8 +90,7 @@ const truncateMiddle = (value: string, head = 8, tail = 6) =>
   value.length > head + tail + 3 ? `${value.slice(0, head)}...${value.slice(-tail)}` : value;
 
 const formatCompactAddress = (value: string) => truncateMiddle(value, 6, 4);
-const addThousandsSeparators = (value: string) =>
-  value.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const addThousandsSeparators = (value: string) => value.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 const billingTokenSymbols = ['USDC', 'SGD', 'TBILL'] as const;
 
@@ -164,7 +162,9 @@ const formatCondensedAmount = (rawAmount: string) => {
     const full = formatUnits(BigInt(rawAmount), 18);
     const [whole, fraction = ''] = full.split('.');
     const trimmedFraction = fraction.replace(/0+$/g, '').slice(0, 6);
-    return trimmedFraction ? `${addThousandsSeparators(whole || '0')}.${trimmedFraction}` : addThousandsSeparators(whole || '0');
+    return trimmedFraction
+      ? `${addThousandsSeparators(whole || '0')}.${trimmedFraction}`
+      : addThousandsSeparators(whole || '0');
   } catch {
     return rawAmount;
   }
@@ -194,7 +194,8 @@ const settlementFxRate = (invoice: InvoiceRecord) => {
     }
 
     const rate = paymentAmount / billingAmount;
-    const formattedRate = rate >= 100 ? rate.toFixed(2) : rate >= 1 ? rate.toFixed(4) : rate.toFixed(6);
+    const formattedRate =
+      rate >= 100 ? rate.toFixed(2) : rate >= 1 ? rate.toFixed(4) : rate.toFixed(6);
     return `1 ${getBillingTokenSymbol(invoice.billingToken)} = ${formattedRate.replace(/\.?0+$/g, '')} ${getPaymentTokenSymbol(invoice.paymentToken)}`;
   } catch {
     return '';

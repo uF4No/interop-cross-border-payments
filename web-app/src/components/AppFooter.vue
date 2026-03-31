@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import BaseIcon from './BaseIcon.vue';
 import { usePrividium } from '../composables/usePrividium';
+import BaseIcon from './BaseIcon.vue';
 
 const { branding } = usePrividium();
 const year = new Date().getFullYear();

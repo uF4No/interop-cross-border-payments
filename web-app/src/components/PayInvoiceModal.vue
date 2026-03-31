@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { formatUnits } from 'viem';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
-import BaseIcon from './BaseIcon.vue';
 import type { InvoicePaymentOption, InvoiceRecord } from '@/types/invoices';
+import BaseIcon from './BaseIcon.vue';
 
 type Props = {
   modelValue: boolean;

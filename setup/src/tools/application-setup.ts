@@ -1,4 +1,4 @@
-import type { Application, ApplicationUpsertBody, ApiClient } from './api-client';
+import type { ApiClient, Application, ApplicationUpsertBody } from './api-client';
 import { extractRes, getApplications, postApplications, putApplication } from './api-client';
 
 export const WEB_APP_ORIGIN = 'http://localhost:5000';

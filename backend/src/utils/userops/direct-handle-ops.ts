@@ -1,4 +1,5 @@
 import {
+  http,
   type Address,
   type Hex,
   concatHex,
@@ -8,7 +9,6 @@ import {
   defineChain,
   getAddress,
   hexToBigInt,
-  http,
   padHex,
   parseAbi
 } from 'viem';

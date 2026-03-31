@@ -2,10 +2,10 @@ import { join } from 'node:path';
 import { defineChain } from 'viem';
 
 import {
+  type ContractsConfig,
   getPreferredChainDeployment,
   loadContractsConfig,
-  warnIfMismatch,
-  type ContractsConfig
+  warnIfMismatch
 } from './contractsConfig';
 import { env } from './envConfig';
 

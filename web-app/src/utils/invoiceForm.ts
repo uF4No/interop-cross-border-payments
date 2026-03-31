@@ -156,7 +156,7 @@ export function getDefaultCreatorChainId(): number {
   const appChainId = readChainId('VITE_PRIVIDIUM_CHAIN_ID', chainOptions[0]?.chainId ?? 0);
   return chainOptions.some((chain) => chain.chainId === appChainId)
     ? appChainId
-    : chainOptions[0]?.chainId ?? appChainId;
+    : (chainOptions[0]?.chainId ?? appChainId);
 }
 
 export function getDefaultDestinationChainId(): number {
@@ -186,9 +186,7 @@ export function getChainOptionById(chainId: number): InvoiceChainOption | undefi
   return chainOptions.find((chain) => chain.chainId === chainId);
 }
 
-export function getTokenOptionByAddress(
-  address: string
-): InvoiceTokenOption | undefined {
+export function getTokenOptionByAddress(address: string): InvoiceTokenOption | undefined {
   const normalized = address.toLowerCase();
   return tokenOptions.find((token) => token.address.toLowerCase() === normalized);
 }

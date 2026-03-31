@@ -55,7 +55,9 @@ function toYamlString(value: string, forceQuoted = false): string {
 }
 
 function findServiceRange(lines: string[], serviceName: string): { start: number; end: number } {
-  const start = lines.findIndex((line) => line.trim() === `${serviceName}:` && line.startsWith('  '));
+  const start = lines.findIndex(
+    (line) => line.trim() === `${serviceName}:` && line.startsWith('  ')
+  );
   if (start < 0) {
     throw new Error(`Could not find service "${serviceName}" in docker-compose file`);
   }
@@ -63,7 +65,7 @@ function findServiceRange(lines: string[], serviceName: string): { start: number
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i += 1) {
     const line = lines[i];
-    if (line && /^  [a-zA-Z0-9_-]+:\s*$/.test(line)) {
+    if (line && /^ {2}[a-zA-Z0-9_-]+:\s*$/.test(line)) {
       end = i;
       break;
     }
@@ -93,7 +95,7 @@ function findEnvironmentRange(
   let end = serviceEnd;
   for (let i = environmentLine + 1; i < serviceEnd; i += 1) {
     const line = lines[i];
-    if (line && /^    [^ ].*:\s*$/.test(line)) {
+    if (line && /^ {4}[^ ].*:\s*$/.test(line)) {
       end = i;
       break;
     }
@@ -146,10 +148,7 @@ function renderCommandValueLine(line: string, value: string): string {
 }
 
 function replaceInlineEntrypointValue(line: string, entryPoint: string): string | null {
-  const patterns = [
-    /(--entrypoints\s+\")([^"]+)(\")/,
-    /(--entrypoints\s+\')([^']+)(\')/
-  ];
+  const patterns = [/(--entrypoints\s+\")([^"]+)(\")/, /(--entrypoints\s+\')([^']+)(\')/];
 
   for (const pattern of patterns) {
     if (pattern.test(line)) {
@@ -228,7 +227,10 @@ export function updatePermissionApisCompose(
   const servicesSummary: ComposeUpdateServiceResult[] = [];
 
   for (const serviceConfig of args.services) {
-    const { start: serviceStart, end: serviceEnd } = findServiceRange(lines, serviceConfig.serviceName);
+    const { start: serviceStart, end: serviceEnd } = findServiceRange(
+      lines,
+      serviceConfig.serviceName
+    );
     const { start: envStart, end: envEnd } = findEnvironmentRange(lines, serviceStart, serviceEnd);
 
     let envLines = lines.slice(envStart, envEnd);
@@ -243,7 +245,9 @@ export function updatePermissionApisCompose(
       );
     }
 
-    const insertionAnchor = envLines.findIndex((line) => line.startsWith('      SEQUENCER_RPC_URL:'));
+    const insertionAnchor = envLines.findIndex((line) =>
+      line.startsWith('      SEQUENCER_RPC_URL:')
+    );
     let insertionIndex =
       insertionAnchor >= 0
         ? insertionAnchor + 1

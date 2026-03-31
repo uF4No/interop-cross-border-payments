@@ -23,11 +23,8 @@ import {
 } from './tools/contracts-config';
 import type { Client } from './tools/create-admin-client';
 import { createAdminSession } from './tools/create-admin-client';
+import { ensureEntrypointsFunded, formatFundingSummary } from './tools/entrypoint-funding';
 import { syncEnvFromContractsConfig } from './tools/env-sync';
-import {
-  ensureEntrypointsFunded,
-  formatFundingSummary
-} from './tools/entrypoint-funding';
 import { updatePermissionApisCompose } from './tools/permissions-api-compose';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 import { type SsoDeploymentResult, deploySsoContracts } from './tools/sso-deploy';
@@ -506,9 +503,7 @@ async function main() {
   console.log(`  Chain B app client ID: ${applicationOnB.oauthClientId}`);
   console.log(`  Chain C InvoicePayment: ${chainCConfig.invoicePayment ?? 'n/a'}`);
   for (const serviceSummary of composeUpdate.services) {
-    console.log(
-      `  ${serviceSummary.serviceName} bundler RPC: ${serviceSummary.bundlerRpcUrl}`
-    );
+    console.log(`  ${serviceSummary.serviceName} bundler RPC: ${serviceSummary.bundlerRpcUrl}`);
   }
   console.log(
     `  Chain C tokens: ${Object.entries(chainCConfig.tokens ?? {})

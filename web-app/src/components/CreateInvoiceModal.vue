@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
-import { isAddress } from 'viem';
-import BaseIcon from './BaseIcon.vue';
+import { useSsoAccount } from '@/composables/useSsoAccount';
 import {
+  type CreateInvoiceSubmitPayload,
+  type InvoiceFormState,
   createEmptyInvoiceFormState,
   getChainOptionById,
   getDefaultCreatorChainId,
@@ -10,11 +10,11 @@ import {
   getInvoiceTokenOptions,
   getTokenOptionByAddress,
   isAllowedInvoiceChainId,
-  normalizeInvoiceAmount,
-  type CreateInvoiceSubmitPayload,
-  type InvoiceFormState
+  normalizeInvoiceAmount
 } from '@/utils/invoiceForm';
-import { useSsoAccount } from '@/composables/useSsoAccount';
+import { isAddress } from 'viem';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import BaseIcon from './BaseIcon.vue';
 
 type InvoiceFieldKey =
   | 'creator'
@@ -160,7 +160,10 @@ const resetForm = () => {
   }
 
   const preferredChainId = String(resolvedCreatorChainId.value);
-  if (!form.recipientChainId || !isAllowedInvoiceChainId(Number.parseInt(form.recipientChainId, 10))) {
+  if (
+    !form.recipientChainId ||
+    !isAllowedInvoiceChainId(Number.parseInt(form.recipientChainId, 10))
+  ) {
     form.recipientChainId = String(invoiceChainOptions[0]?.chainId ?? preferredChainId);
   }
 

@@ -1,11 +1,11 @@
 import {
+  http,
   type Address,
   type Hex,
   createPublicClient,
   createWalletClient,
   defineChain,
-  formatEther,
-  http
+  formatEther
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -89,7 +89,8 @@ export async function ensureEntrypointsFunded(
       continue;
     }
 
-    const topUpWei = resolvedTargetBalance > balanceBeforeWei ? resolvedTargetBalance - balanceBeforeWei : 0n;
+    const topUpWei =
+      resolvedTargetBalance > balanceBeforeWei ? resolvedTargetBalance - balanceBeforeWei : 0n;
 
     if (topUpWei === 0n) {
       results.push({

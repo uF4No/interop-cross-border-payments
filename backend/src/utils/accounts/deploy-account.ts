@@ -4,34 +4,34 @@ import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { base64UrlToUint8Array, getPublicKeyBytesFromPasskeySignature } from 'sso-legacy/utils';
 import {
+  http,
+  type Address,
+  type Hex,
   concatHex,
   createPublicClient,
   createWalletClient,
   defineChain,
   encodeAbiParameters,
-  http,
-  parseAbi,
-  parseUnits,
-  type Address,
-  type Hex,
   hexToBytes,
   keccak256,
+  parseAbi,
+  parseUnits,
   toHex,
   zeroAddress
 } from 'viem';
 
 import {
+  type TokenKey,
   getChainDeploymentById,
   loadContractsConfig,
-  resolveTokenAddressFromConfig,
-  type TokenKey
+  resolveTokenAddressFromConfig
 } from '@/utils/contractsConfig';
-import { configureSmartAccountPermissions } from '@/utils/prividium/smart-account-permissions';
 import {
-  createChainRuntime,
   type ChainRuntime,
-  type SelectedChainKey
+  type SelectedChainKey,
+  createChainRuntime
 } from '@/utils/prividium/chainRuntime';
+import { configureSmartAccountPermissions } from '@/utils/prividium/smart-account-permissions';
 import { associateWalletWithUser } from '@/utils/prividium/user-wallet-association';
 import { client, executorAccount, l2Wallet } from '../client';
 import { L2_CHAIN_ID, SSO_CONTRACTS } from '../constants';
@@ -125,8 +125,9 @@ async function sleep(ms: number): Promise<void> {
 }
 
 function resolveTokenAssetId(tokenKey: TokenKey, chainId = L2_CHAIN_ID): Hex | undefined {
-  const activeChainAssetId =
-    getChainDeploymentById(contractsConfig, chainId)?.deployment.tokens?.[tokenKey]?.assetId;
+  const activeChainAssetId = getChainDeploymentById(contractsConfig, chainId)?.deployment.tokens?.[
+    tokenKey
+  ]?.assetId;
   if (activeChainAssetId) {
     return activeChainAssetId;
   }
@@ -150,7 +151,10 @@ function resolveLegacyTokenAddress(tokenKey: TokenKey): Address | undefined {
   return undefined;
 }
 
-function resolveTokenAddress(tokenKey: TokenKey, chainId = L2_CHAIN_ID): {
+function resolveTokenAddress(
+  tokenKey: TokenKey,
+  chainId = L2_CHAIN_ID
+): {
   address?: Address;
   source: TokenMintResult['source'];
 } {
@@ -351,7 +355,9 @@ async function bridgeExecutorLiquidityFromChainC(
     });
     console.log(`[fund-tokens] ${tokenLabel}: bridge bundle submitted tx=${txHash}`);
 
-    const sourceReceipt = await chainCClients.publicClient.waitForTransactionReceipt({ hash: txHash });
+    const sourceReceipt = await chainCClients.publicClient.waitForTransactionReceipt({
+      hash: txHash
+    });
     if (sourceReceipt.status !== 'success') {
       return { error: `Bridge tx reverted on chain C: ${txHash}` };
     }
@@ -512,7 +518,7 @@ async function fundTokenToAccount(
     console.log(
       `[fund-tokens] ${tokenLabel}: transferring ${amountNeeded.toString()} to ${accountAddress}`
     );
-    const txHash = await (runtime.walletClient as any).writeContract({
+    const txHash = await runtime.walletClient.writeContract({
       account: runtime.executorAccount,
       chain: runtime.walletClient.chain ?? undefined,
       address: resolved.address,
@@ -611,7 +617,9 @@ export async function deploySmartAccount(
     console.log('deployed Address:', deployedAddress);
 
     await sendFaucetFunds(deployedAddress, runtime);
-    console.log('ℹ️ Skipping token funding during /deploy-account. Use /fund-tokens for on-demand token top-up.');
+    console.log(
+      'ℹ️ Skipping token funding during /deploy-account. Use /fund-tokens for on-demand token top-up.'
+    );
     const tokenMintResults = deferredTokenFundingResults(runtime.chainId);
 
     let permissionsConfigured = false;
@@ -780,7 +788,7 @@ async function deployAccountWithoutSDK(
     console.log(
       `Calling factory.deployAccount (with WASM-encoded data). accountId=${id} originDomain=${origin}`
     );
-    return (runtime.walletClient as any).sendTransaction({
+    return runtime.walletClient.sendTransaction({
       account: runtime.executorAccount,
       chain: runtime.walletClient.chain ?? undefined,
       to: getFactoryAddress(runtime),

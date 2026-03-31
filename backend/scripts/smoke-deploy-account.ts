@@ -1,17 +1,17 @@
-import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
+import dotenv from 'dotenv';
 import {
+  http,
+  type Address,
   createPublicClient,
   createWalletClient,
   defineChain,
   getAddress,
-  http,
   keccak256,
   parseAbi,
   parseUnits,
-  toHex,
-  type Address
+  toHex
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -171,7 +171,9 @@ async function assertBackendFaucetBehavior(baseUrl: string, accountAddress: Addr
   try {
     payload = JSON.parse(text) as ServiceResponse<{ funded?: Record<string, boolean> }>;
   } catch (error) {
-    fail(`Backend faucet returned non-JSON payload: ${error instanceof Error ? error.message : error}`);
+    fail(
+      `Backend faucet returned non-JSON payload: ${error instanceof Error ? error.message : error}`
+    );
   }
 
   const funded = payload.responseObject?.funded;
@@ -203,7 +205,8 @@ async function main() {
     fail('Chain C config is incomplete. Expected chainId, rpcUrl, invoicePayment, and tokens.');
   }
 
-  const backendBaseUrl = process.env.BACKEND_BASE_URL?.trim() || `http://localhost:${process.env.PORT || '4340'}`;
+  const backendBaseUrl =
+    process.env.BACKEND_BASE_URL?.trim() || `http://localhost:${process.env.PORT || '4340'}`;
   const chainAClient = createChainClient(chainA.chainId, chainA.rpcUrl);
   const chainCClient = createChainClient(chainC.chainId, chainC.rpcUrl);
   const scratchAddress = deriveScratchAddress('forge-deploy-account-smoke');
@@ -310,7 +313,9 @@ async function main() {
       args: [scratchAddress, mintAmount]
     });
 
-    const mintReceipt = await chainCClient.publicClient.waitForTransactionReceipt({ hash: mintHash });
+    const mintReceipt = await chainCClient.publicClient.waitForTransactionReceipt({
+      hash: mintHash
+    });
     if (mintReceipt.status !== 'success') {
       fail(`Mint transaction reverted for ${symbol} on chain C. Tx hash: ${mintHash}`);
     }
@@ -329,9 +334,13 @@ async function main() {
     }
   }
 
-  const chainABalanceBefore = await chainAClient.publicClient.getBalance({ address: scratchAddress });
+  const chainABalanceBefore = await chainAClient.publicClient.getBalance({
+    address: scratchAddress
+  });
   await assertBackendFaucetBehavior(backendBaseUrl, scratchAddress);
-  const chainABalanceAfter = await chainAClient.publicClient.getBalance({ address: scratchAddress });
+  const chainABalanceAfter = await chainAClient.publicClient.getBalance({
+    address: scratchAddress
+  });
 
   if (chainABalanceAfter <= chainABalanceBefore) {
     fail(

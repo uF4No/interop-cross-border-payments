@@ -245,12 +245,6 @@ usdc_address_chain_c=$(cast parse-bytes32-address $(cast call --rpc-url $CHAIN_C
 ttbill_address_chain_c=$(cast parse-bytes32-address $(cast call --rpc-url $CHAIN_C_RPC_URL $L2_NATIVE_TOKEN_VAULT_ADDRESS "tokenAddress(bytes32)" $ttbill_asset_id))
 sgd_address_chain_c=$(cast parse-bytes32-address $(cast call --rpc-url $CHAIN_C_RPC_URL $L2_NATIVE_TOKEN_VAULT_ADDRESS "tokenAddress(bytes32)" $sgd_asset_id))
 
-# Deploy TradeEscrow contract
-# echo "Deploying TradeEscrow contract..."
-# trade_escrow_address=$(forge create --rpc-url $CHAIN_A_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --zksync --zk-gas-per-pubdata "1" src/TradeEscrow.sol:TradeEscrow --constructor-args $DEPLOYER_ADDRESS | extract_deployed_address)
-# echo "TradeEscrow deployed at: $trade_escrow_address"
-# cast send --rpc-url $CHAIN_A_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY $trade_escrow_address --value 0.1ether
-
 # Deploy RepoContract
 # echo "Deploying RepoContract..."
 # repo_contract_address=$(forge create --rpc-url $CHAIN_A_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --zksync --zk-gas-per-pubdata "1" src/RepoContract.sol:RepoContract --constructor-args $DEPLOYER_ADDRESS | extract_deployed_address)
@@ -311,7 +305,6 @@ echo "Accounts:"
 echo "Deployer (admin): $DEPLOYER_ADDRESS"
 echo ""
 echo "Contracts:"
-# echo "TradeEscrow (Chain A): $trade_escrow_address"
 # echo "RepoContract (Chain A): $repo_contract_address"
 echo "InvoicePayment (Chain C): $invoice_payment_address"
 echo ""

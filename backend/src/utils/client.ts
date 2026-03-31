@@ -1,11 +1,11 @@
 import { createViemClient } from '@matterlabs/zksync-js/viem/client';
 import { createViemSdk } from '@matterlabs/zksync-js/viem/sdk';
-import { createPublicClient, createWalletClient, defineChain, http, type Hex } from 'viem';
+import { http, type Hex, createPublicClient, createWalletClient, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { sepolia } from 'viem/chains';
 
-import { getChainDeploymentById, loadContractsConfig } from './contractsConfig';
 import { L1_RPC_URL, L2_CHAIN_ID, L2_RPC_URL, l2Chain } from './constants';
+import { getChainDeploymentById, loadContractsConfig } from './contractsConfig';
 import { env } from './envConfig';
 
 const EXECUTOR_PRIVATE_KEY = env.EXECUTOR_PRIVATE_KEY as `0x${string}`;
@@ -169,7 +169,11 @@ async function getAuthTokenForRuntime(runtime: ChainScopedRuntime): Promise<stri
     try {
       console.log(`🔄 Authenticating with Prividium for chain ${runtime.chainId}...`);
 
-      const authBaseUrl = runtime.authBaseUrl || env.PRIVIDIUM_AUTH_BASE_URL || env.CORS_ORIGIN || DEFAULT_AUTH_BASE_URL;
+      const authBaseUrl =
+        runtime.authBaseUrl ||
+        env.PRIVIDIUM_AUTH_BASE_URL ||
+        env.CORS_ORIGIN ||
+        DEFAULT_AUTH_BASE_URL;
       const authUrl = new URL(authBaseUrl);
       const siweDomain = env.SIWE_DOMAIN || authUrl.host;
       const siweUri = env.SIWE_URI || authUrl.origin;

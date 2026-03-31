@@ -2,24 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { OpenAPIRegistry } from '@asteasolutions/zod-to-openapi';
+import express, { type Request, type Response, type Router } from 'express';
+import { StatusCodes } from 'http-status-codes';
 import {
+  http,
+  type Address,
   createPublicClient,
   defineChain,
   getAddress,
-  http,
   parseAbiItem,
-  type Address,
   zeroAddress
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import express, { type Request, type Response, type Router } from 'express';
-import { StatusCodes } from 'http-status-codes';
 import { z } from 'zod';
 
 import { createApiResponse } from '@/utils/response/openAPIResponseBuilders';
 import { ServiceResponse } from '@/utils/response/serviceResponse';
 
-const ADMIN_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
+const ADMIN_PRIVATE_KEY =
+  '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
 const ADMIN_ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' as Address;
 const INVOICE_CHUNK_SIZE = 25;
 const INVOICE_VIEWS = ['all', 'created', 'received'] as const;
@@ -174,9 +175,7 @@ type ContractsConfig = {
       apiUrl?: string;
       authBaseUrl?: string;
       invoicePayment?: string;
-      tokens?: Partial<
-        Record<'usdc' | 'sgd' | 'tbill', { address?: string }>
-      >;
+      tokens?: Partial<Record<'usdc' | 'sgd' | 'tbill', { address?: string }>>;
     };
   };
 };
@@ -337,9 +336,7 @@ function resolveContractsConfigPath(): string {
     }
   }
 
-  throw new Error(
-    `Unable to locate contracts config. Checked: ${candidates.join(', ')}`
-  );
+  throw new Error(`Unable to locate contracts config. Checked: ${candidates.join(', ')}`);
 }
 
 function loadChainCContext(): ChainCContext {
@@ -381,9 +378,15 @@ function loadChainCContext(): ChainCContext {
     authBaseUrl,
     invoicePayment: getAddress(invoicePayment),
     tokens: {
-      usdc: chainC.tokens?.usdc?.address ? { address: getAddress(chainC.tokens.usdc.address) } : undefined,
-      sgd: chainC.tokens?.sgd?.address ? { address: getAddress(chainC.tokens.sgd.address) } : undefined,
-      tbill: chainC.tokens?.tbill?.address ? { address: getAddress(chainC.tokens.tbill.address) } : undefined
+      usdc: chainC.tokens?.usdc?.address
+        ? { address: getAddress(chainC.tokens.usdc.address) }
+        : undefined,
+      sgd: chainC.tokens?.sgd?.address
+        ? { address: getAddress(chainC.tokens.sgd.address) }
+        : undefined,
+      tbill: chainC.tokens?.tbill?.address
+        ? { address: getAddress(chainC.tokens.tbill.address) }
+        : undefined
     }
   };
 }
@@ -681,9 +684,9 @@ async function readAllInvoiceIds(
     toBlock: 'latest'
   });
 
-  return [...new Set(logs.map((log) => log.args.id).filter((id): id is bigint => typeof id === 'bigint'))].sort(
-    (left, right) => (left < right ? -1 : left > right ? 1 : 0)
-  );
+  return [
+    ...new Set(logs.map((log) => log.args.id).filter((id): id is bigint => typeof id === 'bigint'))
+  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 async function readCachedInvoiceSnapshot(
@@ -716,10 +719,7 @@ async function readCachedInvoiceSnapshot(
       return snapshot;
     } catch (error) {
       if (state.value && now - state.fetchedAt < INVOICE_SNAPSHOT_STALE_IF_ERROR_MS) {
-        console.warn(
-          'Serving stale invoice snapshot after refresh failure',
-          error
-        );
+        console.warn('Serving stale invoice snapshot after refresh failure', error);
         return state.value;
       }
       throw error;
@@ -736,7 +736,8 @@ function resolveRequestedAccountAddress(
   req: Request,
   options: { defaultToAdmin: boolean }
 ): Address | null {
-  const queryValue = typeof req.query.accountAddress === 'string' ? req.query.accountAddress : undefined;
+  const queryValue =
+    typeof req.query.accountAddress === 'string' ? req.query.accountAddress : undefined;
   const bodyValue =
     req.body && typeof req.body === 'object' && typeof req.body.accountAddress === 'string'
       ? req.body.accountAddress
@@ -777,7 +778,10 @@ function buildSequentialInvoiceIds(count: bigint): bigint[] {
   return invoiceIds;
 }
 
-function filterInvoicesByView(invoices: NormalizedInvoice[], view: InvoiceView): NormalizedInvoice[] {
+function filterInvoicesByView(
+  invoices: NormalizedInvoice[],
+  view: InvoiceView
+): NormalizedInvoice[] {
   if (view === 'all') {
     return invoices;
   }
@@ -860,8 +864,10 @@ async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView)
     }));
     const countsByView = {
       all: normalizedInvoices.length,
-      created: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('created')).length,
-      received: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('pending')).length
+      created: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('created'))
+        .length,
+      received: normalizedInvoices.filter((invoice) => invoice.sourceTags.includes('pending'))
+        .length
     } satisfies Record<InvoiceView, number>;
 
     return {
@@ -922,7 +928,9 @@ async function fetchInvoices(accountAddress: Address | null, view?: InvoiceView)
   } satisfies InvoiceResponseObject;
 }
 
-async function fetchInvoicePaymentOptions(invoiceId: bigint): Promise<InvoicePaymentOptionsResponseObject> {
+async function fetchInvoicePaymentOptions(
+  invoiceId: bigint
+): Promise<InvoicePaymentOptionsResponseObject> {
   const chainC = loadChainCContext();
   const token = await getAdminAuthToken(chainC);
   const client = createChainCClient(chainC, token);
@@ -973,7 +981,11 @@ async function fetchInvoicePaymentOptions(invoiceId: bigint): Promise<InvoicePay
   const options: PaymentOption[] = [];
 
   for (let index = 0; index < whitelistedTokenAddresses.length; index += 1) {
-    const candidateToken = getAddress(whitelistedTokenAddresses[index]!);
+    const rawCandidateToken = whitelistedTokenAddresses[index];
+    if (!rawCandidateToken) {
+      continue;
+    }
+    const candidateToken = getAddress(rawCandidateToken);
     const configuredSymbol = resolveConfiguredTokenSymbol(chainC, candidateToken);
     const fallbackSymbol = whitelistedSymbols[index] ?? 'TOKEN';
     const symbol = configuredSymbol ?? fallbackSymbol;
@@ -1064,14 +1076,19 @@ async function handleInvoicePaymentOptions(req: Request, res: Response) {
     const responseObject = await fetchInvoicePaymentOptions(BigInt(invoiceIdParam));
     serviceResponse = ServiceResponse.success('Fetched invoice payment options', responseObject);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Failed to fetch invoice payment options';
+    const message =
+      error instanceof Error ? error.message : 'Failed to fetch invoice payment options';
     const notFound = /\bdoes not exist\b/i.test(message);
     const conflict = /\bcannot be paid\b/i.test(message);
 
     serviceResponse = ServiceResponse.failure(
       'Failed to fetch invoice payment options',
       { error: message },
-      notFound ? StatusCodes.NOT_FOUND : conflict ? StatusCodes.CONFLICT : StatusCodes.INTERNAL_SERVER_ERROR
+      notFound
+        ? StatusCodes.NOT_FOUND
+        : conflict
+          ? StatusCodes.CONFLICT
+          : StatusCodes.INTERNAL_SERVER_ERROR
     );
   }
 

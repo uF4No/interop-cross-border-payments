@@ -1,13 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { getAddress, type Address, type Hex } from 'viem';
+import { type Address, type Hex, getAddress } from 'viem';
 
 import { INVOICE_PAYOUTS_FILE } from '../constants';
 
-export type InvoicePayoutStatus =
-  | 'released'
-  | 'bridge_submitted'
-  | 'bridge_failed'
-  | 'completed';
+export type InvoicePayoutStatus = 'released' | 'bridge_submitted' | 'bridge_failed' | 'completed';
 
 export type InvoicePayoutState = {
   invoiceId: string;

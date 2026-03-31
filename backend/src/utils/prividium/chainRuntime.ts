@@ -1,11 +1,11 @@
-import { createPublicClient, createWalletClient, defineChain, http, type Address } from 'viem';
+import { http, type Address, createPublicClient, createWalletClient, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import {
-  loadContractsConfig,
   type ChainDeployment,
   type ChainKey,
-  type SsoContracts
+  type SsoContracts,
+  loadContractsConfig
 } from '../contractsConfig';
 import { env } from '../envConfig';
 

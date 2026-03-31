@@ -367,19 +367,17 @@
 </template>
 
 <script setup lang="ts">
+import { formatEther, formatUnits } from 'viem';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { formatEther, formatUnits } from 'viem';
 import BaseIcon from '../components/BaseIcon.vue';
 import CreateInvoiceModal from '../components/CreateInvoiceModal.vue';
 import InvoiceTableCard from '../components/InvoiceTableCard.vue';
 import PayInvoiceModal from '../components/PayInvoiceModal.vue';
 import { useActiveChainBalances } from '../composables/useActiveChainBalances';
+import { useInteropInvoice } from '../composables/useInteropInvoice';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
-import { useInteropInvoice } from '../composables/useInteropInvoice';
-import { getBackendUrl } from '../utils/backend';
-import type { CreateInvoiceSubmitPayload } from '../utils/invoiceForm';
 import type {
   BackendServiceResponse,
   InvoicePaymentOption,
@@ -388,6 +386,8 @@ import type {
   InvoiceResponseObject,
   InvoiceSourceTag
 } from '../types/invoices';
+import { getBackendUrl } from '../utils/backend';
+import type { CreateInvoiceSubmitPayload } from '../utils/invoiceForm';
 
 type BannerTone = 'info' | 'success' | 'error';
 type ActivityStatus = 'pending' | 'success' | 'failed';
@@ -460,12 +460,14 @@ const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   {
     id: 'create-submit',
     label: 'Send source bundle',
-    description: 'The creator smart account signs one user operation that calls source-chain InteropCenter.sendBundle(...).'
+    description:
+      'The creator smart account signs one user operation that calls source-chain InteropCenter.sendBundle(...).'
   },
   {
     id: 'create-relay',
     label: 'Finalize and relay',
-    description: 'Wait for L2 to L1 finalization and for the interop relay to execute createInvoice on chain C.'
+    description:
+      'Wait for L2 to L1 finalization and for the interop relay to execute createInvoice on chain C.'
   },
   {
     id: 'create-confirm',
@@ -477,27 +479,32 @@ const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   {
     id: 'pay-validate',
     label: 'Validate payment route',
-    description: 'Check invoice state, payer wallet ownership, and whether chain C settlement can proceed.'
+    description:
+      'Check invoice state, payer wallet ownership, and whether chain C settlement can proceed.'
   },
   {
     id: 'pay-prepare',
     label: 'Approve source vault',
-    description: 'Approve the source native token vault only if the payer wallet needs extra allowance before funding.'
+    description:
+      'Approve the source native token vault only if the payer wallet needs extra allowance before funding.'
   },
   {
     id: 'pay-fund',
     label: 'Fund payer shadow account',
-    description: 'Bridge the missing payment token amount into the deterministic chain C shadow account, or skip if already funded.'
+    description:
+      'Bridge the missing payment token amount into the deterministic chain C shadow account, or skip if already funded.'
   },
   {
     id: 'pay-settle',
     label: 'Approve and pay on chain C',
-    description: 'Send the settlement bundle that executes ERC20.approve(...) and InvoicePayment.payInvoice(...) from the payer shadow account.'
+    description:
+      'Send the settlement bundle that executes ERC20.approve(...) and InvoicePayment.payInvoice(...) from the payer shadow account.'
   },
   {
     id: 'pay-confirm',
     label: 'Confirm invoice paid',
-    description: 'Wait for chain C to mark the invoice paid. Any cross-chain creator payout happens later in the backend.'
+    description:
+      'Wait for chain C to mark the invoice paid. Any cross-chain creator payout happens later in the backend.'
   }
 ] as const;
 const INVOICE_POLL_INTERVAL_MS = 10000;
@@ -520,8 +527,7 @@ const {
   sendCreateInvoiceBundle,
   sendFundPayInvoiceBundle,
   sendSettlePayInvoiceBundle
-} =
-  useInteropInvoice();
+} = useInteropInvoice();
 const {
   rows: balanceRows,
   isLoading: isBalancesLoading,
@@ -573,14 +579,20 @@ const activeChainId = computed(() => Number(getChain().id));
 const sourceChainLabel = computed(() => `Chain ${sourceConfig.value.chainKey}`);
 const destinationChainId = computed(() => destinationConfig.value.chainId ?? null);
 const currentInteropCenterAddress = computed(() => sourceConfig.value.interopCenter ?? null);
-const destinationInvoicePaymentAddress = computed(() => destinationConfig.value.invoicePayment ?? null);
+const destinationInvoicePaymentAddress = computed(
+  () => destinationConfig.value.invoicePayment ?? null
+);
 const hasBalanceRows = computed(() => balanceRows.value.length > 0);
 const balancesAutoRefreshSeconds = Math.floor(balancesRefreshIntervalMs / 1000);
 const balancesLastUpdatedLabel = computed(() =>
-  balancesLastUpdatedAt.value ? timestampFormatter.format(new Date(balancesLastUpdatedAt.value)) : ''
+  balancesLastUpdatedAt.value
+    ? timestampFormatter.format(new Date(balancesLastUpdatedAt.value))
+    : ''
 );
-const canOpenInvoiceModal = computed(
-  () => Boolean(ssoAccount.value && currentInteropCenterAddress.value && destinationInvoicePaymentAddress.value)
+const canOpenInvoiceModal = computed(() =>
+  Boolean(
+    ssoAccount.value && currentInteropCenterAddress.value && destinationInvoicePaymentAddress.value
+  )
 );
 const isInvoiceProcessing = computed(() =>
   transactions.value.some((entry) => entry.status === 'pending' && Boolean(entry.interop))
@@ -677,7 +689,7 @@ const isInvoiceRecord = (value: unknown): value is InvoiceRecord => {
   );
 };
 
-const isServiceResponse = <T,>(value: unknown): value is BackendServiceResponse<T> => {
+const isServiceResponse = <T>(value: unknown): value is BackendServiceResponse<T> => {
   if (!isRecord(value)) return false;
   return (
     typeof value.success === 'boolean' &&
@@ -1093,12 +1105,7 @@ const fundTestTokens = async () => {
   }
 };
 
-const addTransaction = (
-  func: string,
-  status: ActivityStatus,
-  hash: string,
-  detail: string
-) => {
+const addTransaction = (func: string, status: ActivityStatus, hash: string, detail: string) => {
   const id = Date.now().toString();
   transactions.value.unshift({
     id,
@@ -1239,7 +1246,10 @@ const waitForInvoiceAppearance = async (
         return match;
       }
     } catch (error) {
-      lastFetchError = formatTransactionError(error, 'Failed to read invoices while waiting for chain C.');
+      lastFetchError = formatTransactionError(
+        error,
+        'Failed to read invoices while waiting for chain C.'
+      );
     }
 
     await new Promise((resolve) => setTimeout(resolve, INVOICE_POLL_INTERVAL_MS));
@@ -1265,7 +1275,10 @@ const waitForInvoiceStatus = async (invoiceId: string, targetStatus: string) => 
         return match;
       }
     } catch (error) {
-      lastFetchError = formatTransactionError(error, 'Failed to read invoices while waiting for chain C.');
+      lastFetchError = formatTransactionError(
+        error,
+        'Failed to read invoices while waiting for chain C.'
+      );
     }
 
     await new Promise((resolve) => setTimeout(resolve, INVOICE_POLL_INTERVAL_MS));
@@ -1310,7 +1323,9 @@ const waitForShadowAccountBalance = async (
     throw new Error(lastReadError);
   }
 
-  throw new Error(`Timed out waiting for shadow account ${shadowAccount} to receive funds on chain C.`);
+  throw new Error(
+    `Timed out waiting for shadow account ${shadowAccount} to receive funds on chain C.`
+  );
 };
 
 const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) => {
@@ -1376,7 +1391,8 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
 
     interopSourceTxHash.value = result.transactionHash;
     interopBundleHash.value = result.bundleHash ?? '';
-    createInvoiceBanner.value = 'Source transaction confirmed. Waiting for the invoice to appear on chain C.';
+    createInvoiceBanner.value =
+      'Source transaction confirmed. Waiting for the invoice to appear on chain C.';
     setInteropStepDetail(
       'create-submit',
       result.bundleHash
@@ -1543,7 +1559,9 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       );
     }
     if (!ssoAccount.value) {
-      throw new Error('No SSO account is selected. Re-login and re-select the intended recipient account.');
+      throw new Error(
+        'No SSO account is selected. Re-login and re-select the intended recipient account.'
+      );
     }
     if (ssoAccount.value.toLowerCase() !== invoice.recipientRefundAddress.toLowerCase()) {
       throw new Error(
@@ -1702,7 +1720,10 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     void refreshBalances();
     refreshInvoiceTable();
   } catch (error) {
-    interopError.value = formatTransactionError(error, `Failed to pay invoice ${invoice.id} on chain C.`);
+    interopError.value = formatTransactionError(
+      error,
+      `Failed to pay invoice ${invoice.id} on chain C.`
+    );
     errorMessage.value = interopError.value;
     failInteropProgress(interopError.value);
     syncTransactionInterop(txId, 'pay');
@@ -1727,5 +1748,4 @@ onMounted(() => {
     errorMessage.value = 'Missing interop contract configuration for the active invoice route.';
   }
 });
-
 </script>

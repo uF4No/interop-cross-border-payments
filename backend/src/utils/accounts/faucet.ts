@@ -77,8 +77,8 @@ export async function sendFaucetFunds(accountAddress: Address, runtime?: ChainRu
 
 async function fundEntryPoint(
   accountAddress: Address,
-  walletClient: any,
-  publicClient: any,
+  walletClient: ChainRuntime['walletClient'],
+  publicClient: ChainRuntime['publicClient'],
   entryPoint: Address,
   amount: bigint,
   account = executorAccount
@@ -89,8 +89,8 @@ async function fundEntryPoint(
 
   console.log('📥 Depositing to EntryPoint...');
   const depositHash = await walletClient.writeContract({
-      account,
-      chain: walletClient.chain ?? undefined,
+    account,
+    chain: walletClient.chain ?? undefined,
     address: entryPoint,
     abi: entryPoint08Abi,
     functionName: 'depositTo',
@@ -104,8 +104,8 @@ async function fundEntryPoint(
 
 async function fundAccount(
   accountAddress: Address,
-  walletClient: any,
-  publicClient: any,
+  walletClient: ChainRuntime['walletClient'],
+  publicClient: ChainRuntime['publicClient'],
   amount: bigint,
   account = executorAccount
 ) {
@@ -142,7 +142,7 @@ async function fundShadowAccount(shadowAccount: Address, amount: bigint) {
 
 async function getShadowAccount(
   l2Address: `0x${string}`,
-  publicClient: any,
+  publicClient: ChainRuntime['publicClient'],
   interopCenter: Address
 ) {
   const code = await publicClient.getBytecode({ address: interopCenter });

@@ -3,15 +3,9 @@ import { intro, outro } from '@clack/prompts';
 import { type Address, getAddress } from 'viem';
 
 import { assertDotEnv, extractConfig, extractConfigOptional } from './tools/config-tools';
+import { readContractsConfig, resolveContractsConfigPath } from './tools/contracts-config';
 import { createAdminSession } from './tools/create-admin-client';
-import {
-  readContractsConfig,
-  resolveContractsConfigPath
-} from './tools/contracts-config';
-import {
-  ensureEntrypointsFunded,
-  formatFundingSummary
-} from './tools/entrypoint-funding';
+import { ensureEntrypointsFunded, formatFundingSummary } from './tools/entrypoint-funding';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 
 type ChainConfig = {
@@ -97,7 +91,11 @@ function readChainConfig(setupEnvPath: string, key: 'a' | 'b'): ChainConfig {
   };
 }
 
-async function resolveAuthToken(chain: ChainConfig, adminPrivateKey: `0x${string}`, adminAddress: Address) {
+async function resolveAuthToken(
+  chain: ChainConfig,
+  adminPrivateKey: `0x${string}`,
+  adminAddress: Address
+) {
   await assertZksyncOsIsUp(chain.rpcUrl, BigInt(chain.chainId));
   const resolvedApiUrl = await assertPrividiumApiUp(chain.apiUrl);
   const { token } = await createAdminSession(

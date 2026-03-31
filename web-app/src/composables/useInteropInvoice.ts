@@ -1,25 +1,23 @@
-import { computed } from 'vue';
 import {
-  createPublicClient,
-  defineChain,
+  http,
   type Address,
   type Hex,
   type PublicClient,
   concat,
   concatHex,
+  createPublicClient,
+  defineChain,
   encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
   getAddress,
-  http,
   isAddress,
   pad,
   parseAbi,
   toHex
 } from 'viem';
+import { computed } from 'vue';
 
-import { usePrividium } from './usePrividium';
-import { useRpcClient } from './useRpcClient';
 import type { CreateInvoiceSubmitPayload } from '@/utils/invoiceForm';
 import {
   assertPasskeyMatchesAccount,
@@ -33,10 +31,12 @@ import {
   signUserOpWithPasskey
 } from '@/utils/sso/signUserOpWithPasskey';
 import {
-  submitUserOpWithFallback,
-  type UserOpSubmissionResult
+  type UserOpSubmissionResult,
+  submitUserOpWithFallback
 } from '@/utils/sso/submitUserOpWithFallback';
 import type { PasskeyCredential } from '@/utils/sso/types';
+import { usePrividium } from './usePrividium';
+import { useRpcClient } from './useRpcClient';
 
 type WalletAuthorizer = (params: {
   walletAddress: `0x${string}`;
@@ -294,7 +294,10 @@ function shadowAccountAttribute(): Hex {
 }
 
 function readInteropRelayAddress(): Address | undefined {
-  const configured = readAddress('VITE_CHAIN_C_INTEROP_RELAY_ADDRESS', 'VITE_INTEROP_RELAY_ADDRESS');
+  const configured = readAddress(
+    'VITE_CHAIN_C_INTEROP_RELAY_ADDRESS',
+    'VITE_INTEROP_RELAY_ADDRESS'
+  );
   if (configured) {
     return configured;
   }
@@ -353,7 +356,11 @@ function buildGasOptions(): GasOptions {
 }
 
 function resolveSourceChainKey(chainId: number): SourceChainKey {
-  const chainAId = readChainId('VITE_CHAIN_A_CHAIN_ID', 'VITE_PRIVIDIUM_CHAIN_A_ID', 'VITE_SSO_CHAIN_ID');
+  const chainAId = readChainId(
+    'VITE_CHAIN_A_CHAIN_ID',
+    'VITE_PRIVIDIUM_CHAIN_A_ID',
+    'VITE_SSO_CHAIN_ID'
+  );
   const chainBId = readChainId('VITE_CHAIN_B_CHAIN_ID', 'VITE_PRIVIDIUM_CHAIN_B_ID');
 
   if (chainBId && chainId === chainBId) {
@@ -373,7 +380,8 @@ function getSourceInteropConfig(chainId: number): SourceInteropConfig {
   return {
     chainKey,
     chainId,
-    nativeTokenVault: readAddress(`VITE_CHAIN_${chainKey}_NATIVE_TOKEN_VAULT`) ?? L2_NATIVE_TOKEN_VAULT_ADDRESS,
+    nativeTokenVault:
+      readAddress(`VITE_CHAIN_${chainKey}_NATIVE_TOKEN_VAULT`) ?? L2_NATIVE_TOKEN_VAULT_ADDRESS,
     interopCenter: readAddress(`VITE_CHAIN_${chainKey}_INTEROP_CENTER`),
     entryPoint: readAddress(
       `VITE_SSO_ENTRYPOINT_CONTRACT_CHAIN_${chainKey}`,
@@ -434,8 +442,9 @@ function formatTokenAmount(amount: bigint) {
 
 function estimateRequiredUserOpPrefund(gasOptions: GasOptions) {
   return (
-    gasOptions.callGasLimit + gasOptions.verificationGasLimit + gasOptions.preVerificationGas
-  ) * gasOptions.maxFeePerGas;
+    (gasOptions.callGasLimit + gasOptions.verificationGasLimit + gasOptions.preVerificationGas) *
+    gasOptions.maxFeePerGas
+  );
 }
 
 async function assertSufficientUserOpPrefund(params: {
@@ -473,9 +482,9 @@ function resolveConfiguredPaymentToken(
   source: SourceInteropConfig,
   destination: DestinationInteropConfig
 ) {
-  const symbol = (Object.entries(destination.tokenAddresses) as Array<
-    [BillingTokenSymbol, Address | undefined]
-  >).find(
+  const symbol = (
+    Object.entries(destination.tokenAddresses) as Array<[BillingTokenSymbol, Address | undefined]>
+  ).find(
     ([, tokenAddress]) =>
       tokenAddress !== undefined && tokenAddress.toLowerCase() === paymentToken.toLowerCase()
   )?.[0];
@@ -490,9 +499,7 @@ function resolveConfiguredPaymentToken(
   const sourceAssetId = source.tokenAssetIds[symbol];
 
   if (!sourceToken) {
-    throw new Error(
-      `Missing source-chain ${symbol} token address for chain ${source.chainKey}.`
-    );
+    throw new Error(`Missing source-chain ${symbol} token address for chain ${source.chainKey}.`);
   }
   if (!sourceAssetId) {
     throw new Error(`Missing source-chain ${symbol} asset ID for chain ${source.chainKey}.`);
@@ -725,7 +732,9 @@ async function resolveInteropSession(
 
   if (
     linkedWallets.length > 0 &&
-    !linkedWallets.some((walletAddress) => walletAddress.toLowerCase() === savedAccount.toLowerCase())
+    !linkedWallets.some(
+      (walletAddress) => walletAddress.toLowerCase() === savedAccount.toLowerCase()
+    )
   ) {
     throw new Error(
       'Selected passkey account is not linked to the authenticated profile on the current chain. Re-login with that chain and re-select the passkey.'
@@ -905,7 +914,8 @@ export function useInteropInvoice() {
 
     const resolvedSourceConfig = sourceConfig.value;
     const resolvedDestinationConfig = destinationConfig.value;
-    const destinationBillingToken = resolvedDestinationConfig.tokenAddresses[payload.billingTokenSymbol];
+    const destinationBillingToken =
+      resolvedDestinationConfig.tokenAddresses[payload.billingTokenSymbol];
     await refreshUserProfile();
     const linkedWallets = userWallets.value
       .map((walletAddress) => getAddress(walletAddress))
@@ -1090,20 +1100,15 @@ export function useInteropInvoice() {
     const resolvedSourceConfig = sourceConfig.value;
     const resolvedDestinationConfig = destinationConfig.value;
     const invoiceId = payload.invoiceId.trim();
-    const {
-      paymentAmount,
-      paymentToken,
-      session,
-      shadowAccount,
-      destinationBalance
-    } = await resolvePayInvoiceContext(
-      payload,
-      currentRpcClient,
-      resolvedSourceConfig,
-      resolvedDestinationConfig,
-      refreshUserProfile,
-      userWallets.value
-    );
+    const { paymentAmount, paymentToken, session, shadowAccount, destinationBalance } =
+      await resolvePayInvoiceContext(
+        payload,
+        currentRpcClient,
+        resolvedSourceConfig,
+        resolvedDestinationConfig,
+        refreshUserProfile,
+        userWallets.value
+      );
 
     if (destinationBalance < paymentAmount) {
       throw new Error(
@@ -1197,8 +1202,7 @@ export function useInteropInvoice() {
       destinationClient.getBalance({ address: resolvedDestinationConfig.invoicePayment })
     ]);
 
-    const requiresCrossChainPayout =
-      payload.creatorChainId !== resolvedDestinationConfig.chainId;
+    const requiresCrossChainPayout = payload.creatorChainId !== resolvedDestinationConfig.chainId;
 
     return {
       crossChainFee,

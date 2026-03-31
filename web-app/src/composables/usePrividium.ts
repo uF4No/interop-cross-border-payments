@@ -78,36 +78,46 @@ const readChainEnv = (chainKey: PrividiumChainKey): ChainEnvConfig => {
     `VITE_CHAIN_${suffix}_CLIENT_ID`,
     'VITE_CLIENT_ID'
   );
-  const nativeCurrencySymbol =
+  const nativeCurrencySymbol = readFirstDefined(
+    `VITE_PRIVIDIUM_CHAIN_${suffix}_NATIVE_CURRENCY_SYMBOL`,
+    `VITE_CHAIN_${suffix}_NATIVE_CURRENCY_SYMBOL`,
+    'VITE_PRIVIDIUM_NATIVE_CURRENCY_SYMBOL',
+    'ETH'
+  );
+  const companyName =
     readFirstDefined(
-      `VITE_PRIVIDIUM_CHAIN_${suffix}_NATIVE_CURRENCY_SYMBOL`,
-      `VITE_CHAIN_${suffix}_NATIVE_CURRENCY_SYMBOL`,
-      'VITE_PRIVIDIUM_NATIVE_CURRENCY_SYMBOL',
-      'ETH'
-    );
-  const companyName = readFirstDefined(
-    `VITE_PRIVIDIUM_CHAIN_${suffix}_COMPANY_NAME`,
-    `VITE_CHAIN_${suffix}_COMPANY_NAME`,
-    `VITE_COMPANY_${suffix}_NAME`,
-    'VITE_COMPANY_NAME',
-    'Prividium™'
-  ) ?? 'Prividium™';
-  const accentColor = readFirstDefined(
-    `VITE_PRIVIDIUM_CHAIN_${suffix}_ACCENT_COLOR`,
-    `VITE_CHAIN_${suffix}_ACCENT_COLOR`,
-    `VITE_ACCENT_${suffix}_COLOR`,
-    'VITE_ACCENT_COLOR',
-    '#2563eb'
-  ) ?? '#2563eb';
-  const companyIcon = readFirstDefined(
-    `VITE_PRIVIDIUM_CHAIN_${suffix}_COMPANY_ICON`,
-    `VITE_CHAIN_${suffix}_COMPANY_ICON`,
-    `VITE_COMPANY_${suffix}_ICON`,
-    'VITE_COMPANY_ICON',
-    'CubeIcon'
-  ) ?? 'CubeIcon';
+      `VITE_PRIVIDIUM_CHAIN_${suffix}_COMPANY_NAME`,
+      `VITE_CHAIN_${suffix}_COMPANY_NAME`,
+      `VITE_COMPANY_${suffix}_NAME`,
+      'VITE_COMPANY_NAME',
+      'Prividium™'
+    ) ?? 'Prividium™';
+  const accentColor =
+    readFirstDefined(
+      `VITE_PRIVIDIUM_CHAIN_${suffix}_ACCENT_COLOR`,
+      `VITE_CHAIN_${suffix}_ACCENT_COLOR`,
+      `VITE_ACCENT_${suffix}_COLOR`,
+      'VITE_ACCENT_COLOR',
+      '#2563eb'
+    ) ?? '#2563eb';
+  const companyIcon =
+    readFirstDefined(
+      `VITE_PRIVIDIUM_CHAIN_${suffix}_COMPANY_ICON`,
+      `VITE_CHAIN_${suffix}_COMPANY_ICON`,
+      `VITE_COMPANY_${suffix}_ICON`,
+      'VITE_COMPANY_ICON',
+      'CubeIcon'
+    ) ?? 'CubeIcon';
 
-  if (!chainIdRaw || !chainName || !apiUrl || !rpcUrl || !authBaseUrl || !clientId || !nativeCurrencySymbol) {
+  if (
+    !chainIdRaw ||
+    !chainName ||
+    !apiUrl ||
+    !rpcUrl ||
+    !authBaseUrl ||
+    !clientId ||
+    !nativeCurrencySymbol
+  ) {
     throw new Error(
       `Missing Prividium env for chain ${chainKey}. Set the chain-specific VITE_PRIVIDIUM_CHAIN_${suffix}_* vars or the legacy single-chain fallbacks.`
     );
@@ -516,7 +526,9 @@ const prividiumFacade = {
 export function usePrividium() {
   initializePrividium();
 
-  const userEmail = computed(() => userProfile.value?.displayName || userProfile.value?.userId || null);
+  const userEmail = computed(
+    () => userProfile.value?.displayName || userProfile.value?.userId || null
+  );
   const userName = computed(() => userProfile.value?.displayName || 'User');
   const userRoles = computed(() => userProfile.value?.roles || []);
   const userWallets = computed(() => userProfile.value?.walletAddresses || []);

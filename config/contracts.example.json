@@ -49,9 +49,7 @@
         "id": "lwdwz1ES75dUZRJ-6TSle",
         "name": "local-app",
         "oauthClientId": "F98KnHV61iyCba3P",
-        "oauthRedirectUris": [
-          "http://localhost:5000/auth-callback.html"
-        ],
+        "oauthRedirectUris": ["http://localhost:5000/auth-callback.html"],
         "origin": "http://localhost:5000",
         "createdAt": "2026-03-30T14:26:34.900Z",
         "updatedAt": "2026-03-30T14:26:34.900Z"
@@ -101,9 +99,7 @@
         "id": "evCVcfEo-MZqCclSbowY9",
         "name": "local-app",
         "oauthClientId": "yOJST8sFP8O3ePgK",
-        "oauthRedirectUris": [
-          "http://localhost:5000/auth-callback.html"
-        ],
+        "oauthRedirectUris": ["http://localhost:5000/auth-callback.html"],
         "origin": "http://localhost:5000",
         "createdAt": "2026-03-30T14:26:34.907Z",
         "updatedAt": "2026-03-30T14:26:34.907Z"

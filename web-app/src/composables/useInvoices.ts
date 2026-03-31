@@ -1,7 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { useSsoAccount } from './useSsoAccount';
-import { getBackendUrl } from '../utils/backend';
 import type {
   BackendServiceResponse,
   InvoiceRecord,
@@ -11,6 +9,8 @@ import type {
   InvoiceTableStatusFilter,
   InvoiceView
 } from '../types/invoices';
+import { getBackendUrl } from '../utils/backend';
+import { useSsoAccount } from './useSsoAccount';
 
 const RELATIONSHIP_FILTERS: InvoiceTableRelationshipFilter[] = ['created', 'received'];
 const STATUS_FILTERS: InvoiceTableStatusFilter[] = ['pending', 'paid'];
@@ -200,7 +200,9 @@ export function useInvoices() {
 
   const matchesStatusFilter = (invoice: InvoiceRecord, statusFilter: InvoiceTableStatusFilter) => {
     const normalizedStatus = invoice.status.trim().toLowerCase();
-    return statusFilter === 'pending' ? normalizedStatus === 'created' : normalizedStatus === 'paid';
+    return statusFilter === 'pending'
+      ? normalizedStatus === 'created'
+      : normalizedStatus === 'paid';
   };
 
   const countsByFilter = computed<
@@ -299,7 +301,9 @@ export function useInvoices() {
   const runLoadInvoices = async (reason: RefreshReason) => {
     if (isLoading.value || isRefreshing.value) {
       queuedRefreshReason =
-        queuedRefreshReason === 'manual' || reason !== 'manual' ? queuedRefreshReason ?? reason : reason;
+        queuedRefreshReason === 'manual' || reason !== 'manual'
+          ? (queuedRefreshReason ?? reason)
+          : reason;
       return;
     }
 
@@ -349,7 +353,9 @@ export function useInvoices() {
         throw new Error('Unexpected invoice payload.');
       }
 
-      const relatedInvoices = responseObject.invoices.filter((invoice) => invoice.sourceTags.length > 0);
+      const relatedInvoices = responseObject.invoices.filter(
+        (invoice) => invoice.sourceTags.length > 0
+      );
       if (!areInvoiceArraysEqual(previousInvoices, relatedInvoices)) {
         allInvoices.value = relatedInvoices;
       }

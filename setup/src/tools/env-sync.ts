@@ -2,12 +2,12 @@ import path from 'node:path';
 
 import { extractConfigOptional, setDotEnvConfig } from './config-tools';
 import {
-  readContractsConfig,
   type ChainDeployment,
   type ContractsConfig,
   type SsoContracts,
   type TokenDeployment,
-  type TokenKey
+  type TokenKey,
+  readContractsConfig
 } from './contracts-config';
 
 type SyncEnvArgs = {
@@ -40,11 +40,7 @@ function chainLabel(key: ChainKey): string {
   return key.toUpperCase();
 }
 
-function setOptionalEnv(
-  dirPath: string,
-  name: string,
-  value?: string | number | null
-): void {
+function setOptionalEnv(dirPath: string, name: string, value?: string | number | null): void {
   if (value === undefined || value === null || value === '') {
     return;
   }

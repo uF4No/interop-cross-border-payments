@@ -1,15 +1,15 @@
-import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
+import dotenv from 'dotenv';
 import {
+  http,
+  type Address,
   createPublicClient,
   createWalletClient,
   defineChain,
   getAddress,
-  http,
   parseAbi,
-  parseUnits,
-  type Address
+  parseUnits
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -145,7 +145,10 @@ async function assertBackendHealthy(baseUrl: string) {
 
 async function callInvoicesEndpoint(baseUrl: string) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-  const attempts: Array<{ method: 'GET' | 'POST'; init?: { headers?: Record<string, string>; body?: string } }> = [
+  const attempts: Array<{
+    method: 'GET' | 'POST';
+    init?: { headers?: Record<string, string>; body?: string };
+  }> = [
     { method: 'GET' },
     {
       method: 'POST',
@@ -242,7 +245,9 @@ function findInvoiceById(value: unknown, invoiceId: string): Record<string, unkn
 
   const nestedInvoice = record.invoice;
   if (nestedInvoice && typeof nestedInvoice === 'object') {
-    const nestedId = (nestedInvoice as Record<string, unknown>).id ?? (nestedInvoice as Record<string, unknown>).invoiceId;
+    const nestedId =
+      (nestedInvoice as Record<string, unknown>).id ??
+      (nestedInvoice as Record<string, unknown>).invoiceId;
     if (nestedId !== undefined && String(nestedId) === invoiceId) {
       return nestedInvoice as Record<string, unknown>;
     }
@@ -265,7 +270,8 @@ async function main() {
   const contractAddress = toAddress(chainC.invoicePayment, 'chain C invoicePayment');
   const rpcUrl = chainC.rpcUrl;
   const chainId = chainC.chainId;
-  const backendBaseUrl = process.env.BACKEND_BASE_URL?.trim() || `http://localhost:${process.env.PORT || '4340'}`;
+  const backendBaseUrl =
+    process.env.BACKEND_BASE_URL?.trim() || `http://localhost:${process.env.PORT || '4340'}`;
 
   const { publicClient, walletClient, account } = createChainClient(chainId, rpcUrl);
   if (account.address.toLowerCase() !== ADMIN_ADDRESS.toLowerCase()) {
@@ -416,16 +422,19 @@ async function main() {
     ? (paymentOptionsRecord.options as Array<Record<string, unknown>>)
     : [];
   if (options.length === 0) {
-    fail(`Payment options endpoint returned no quoteable payment options for invoice ${createdInvoiceId.toString()}.`);
+    fail(
+      `Payment options endpoint returned no quoteable payment options for invoice ${createdInvoiceId.toString()}.`
+    );
   }
 
   const sameTokenOption = options.find(
     (option) =>
-      typeof option.token === 'string' &&
-      getAddress(option.token) === billingTokenCandidate.address
+      typeof option.token === 'string' && getAddress(option.token) === billingTokenCandidate.address
   );
   if (!sameTokenOption) {
-    fail(`Payment options endpoint did not include the billing token ${billingTokenCandidate.address}.`);
+    fail(
+      `Payment options endpoint did not include the billing token ${billingTokenCandidate.address}.`
+    );
   }
   if (String(sameTokenOption.paymentAmount) !== billingAmount.toString()) {
     fail(

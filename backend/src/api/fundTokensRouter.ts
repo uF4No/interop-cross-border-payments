@@ -189,7 +189,11 @@ fundTokensRouter.get('/:jobId', (req: Request, res: Response) => {
 
   let serviceResponse: ServiceResponse<unknown>;
   if (!job) {
-    serviceResponse = ServiceResponse.failure('Token funding job not found.', null, StatusCodes.NOT_FOUND);
+    serviceResponse = ServiceResponse.failure(
+      'Token funding job not found.',
+      null,
+      StatusCodes.NOT_FOUND
+    );
   } else {
     serviceResponse = ServiceResponse.success('Token funding job status.', job);
   }

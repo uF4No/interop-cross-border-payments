@@ -92,12 +92,7 @@ interface IInteropHandler {
 `
   },
   {
-    relativePath: path.join(
-      'era-contracts',
-      'system-contracts',
-      'contracts',
-      'Constants.sol'
-    ),
+    relativePath: path.join('era-contracts', 'system-contracts', 'contracts', 'Constants.sol'),
     content: `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
@@ -311,7 +306,11 @@ function createCompatibilityWorkspace(tempRoot: string, contractsDir: string): v
   }
 }
 
-function copyBuiltArtifact(tempRoot: string, contractsDir: string, relativeArtifactPath: string): void {
+function copyBuiltArtifact(
+  tempRoot: string,
+  contractsDir: string,
+  relativeArtifactPath: string
+): void {
   const sourcePath = path.join(tempRoot, relativeArtifactPath);
   if (!fs.existsSync(sourcePath)) {
     throw new Error(`Expected compiled artifact missing: ${sourcePath}`);

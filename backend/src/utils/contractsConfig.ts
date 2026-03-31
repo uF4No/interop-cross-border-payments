@@ -125,12 +125,18 @@ function getOrderedChainEntries(
     return entries;
   }
 
-  const preferredIndex = entries.findIndex(({ deployment }) => deployment.chainId === preferredChainId);
+  const preferredIndex = entries.findIndex(
+    ({ deployment }) => deployment.chainId === preferredChainId
+  );
   if (preferredIndex <= 0) {
     return entries;
   }
 
-  return [entries[preferredIndex], ...entries.slice(0, preferredIndex), ...entries.slice(preferredIndex + 1)];
+  return [
+    entries[preferredIndex],
+    ...entries.slice(0, preferredIndex),
+    ...entries.slice(preferredIndex + 1)
+  ];
 }
 
 export function getPreferredChainDeployment(

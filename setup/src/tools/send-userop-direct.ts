@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import EntryPointArtifact from '../system/contracts/EntryPoint.json';
 import {
+  http,
   type Address,
   type Hex,
   concatHex,
@@ -9,10 +9,10 @@ import {
   createWalletClient,
   getAddress,
   hexToBigInt,
-  http,
-  padHex,
+  padHex
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import EntryPointArtifact from '../system/contracts/EntryPoint.json';
 
 type RpcEnvelope = {
   method: string;
@@ -87,7 +87,12 @@ function parseArgs(argv: string[]): CliOptions {
     usage();
   }
 
-  const resolvedFilePath = path.resolve(argv[0]!);
+  const [inputFilePath] = argv;
+  if (!inputFilePath) {
+    usage();
+  }
+
+  const resolvedFilePath = path.resolve(inputFilePath);
   let rpcUrl = process.env.RPC_URL ?? 'http://127.0.0.1:3050';
   let privateKey = process.env.EXECUTOR_PRIVATE_KEY ?? process.env.ADMIN_PRIVATE_KEY;
   let beneficiary: Address | undefined;

@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { createApiResponse } from '@/utils/response/openAPIResponseBuilders';
 import { ServiceResponse } from '@/utils/response/serviceResponse';
 import {
-  submitUserOpDirectHandleOps,
-  type DirectHandleOpsRequest
+  type DirectHandleOpsRequest,
+  submitUserOpDirectHandleOps
 } from '@/utils/userops/direct-handle-ops';
 
 const addressSchema = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
@@ -85,8 +85,7 @@ directUserOpRouter.post('/direct-handle-ops', async (req: Request, res: Response
     const serviceResponse = ServiceResponse.success('Direct handleOps submitted', result);
     res.status(serviceResponse.statusCode).send(serviceResponse);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : 'Direct handleOps fallback failed';
+    const message = error instanceof Error ? error.message : 'Direct handleOps fallback failed';
     const serviceResponse = ServiceResponse.failure(
       message,
       null,

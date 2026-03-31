@@ -87,7 +87,10 @@ function isRateLimitError(error: unknown) {
   return /\b429\b|too many requests|rate limit/i.test(error.message);
 }
 
-function areBalanceRowsEqual(left: readonly ActiveChainBalanceRow[], right: readonly ActiveChainBalanceRow[]) {
+function areBalanceRowsEqual(
+  left: readonly ActiveChainBalanceRow[],
+  right: readonly ActiveChainBalanceRow[]
+) {
   if (left.length !== right.length) {
     return false;
   }
@@ -212,7 +215,9 @@ export function useActiveChainBalances() {
   const runRefresh = async (reason: RefreshReason) => {
     if (isLoading.value || isRefreshing.value) {
       queuedRefreshReason =
-        queuedRefreshReason === 'manual' || reason !== 'manual' ? queuedRefreshReason ?? reason : reason;
+        queuedRefreshReason === 'manual' || reason !== 'manual'
+          ? (queuedRefreshReason ?? reason)
+          : reason;
       return;
     }
 
@@ -279,24 +284,27 @@ export function useActiveChainBalances() {
         }
       }
     } finally {
-      if (activeRequestId !== requestId) {
-        return;
-      }
-      activeRefreshReason.value = null;
-      isLoading.value = false;
-      isRefreshing.value = false;
-      scheduleQueuedRefresh();
-      if (reason === 'auto') {
-        scheduleAutoRefresh();
+      if (activeRequestId === requestId) {
+        activeRefreshReason.value = null;
+        isLoading.value = false;
+        isRefreshing.value = false;
+        scheduleQueuedRefresh();
+        if (reason === 'auto') {
+          scheduleAutoRefresh();
+        }
       }
     }
   };
 
   const refresh = () => runRefresh('manual');
 
-  watch([account, rpcClient, selectedChainKey], () => {
-    void runRefresh('dependency');
-  }, { immediate: true });
+  watch(
+    [account, rpcClient, selectedChainKey],
+    () => {
+      void runRefresh('dependency');
+    },
+    { immediate: true }
+  );
 
   onMounted(() => {
     scheduleAutoRefresh();

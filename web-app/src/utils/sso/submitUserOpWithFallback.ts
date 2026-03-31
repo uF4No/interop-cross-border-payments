@@ -1,7 +1,7 @@
 import type { Address, Hex, PublicClient } from 'viem';
 
-import { getBackendUrl } from '@/utils/backend';
 import type { BackendServiceResponse } from '@/types/invoices';
+import { getBackendUrl } from '@/utils/backend';
 
 export type BundlerUserOpV08 = {
   sender: `0x${string}`;
@@ -203,10 +203,7 @@ export async function submitUserOpWithFallback(params: {
     });
   } catch (fallbackError) {
     const primaryMessage = formatErrorMessage(primaryError, 'Bundler submission failed');
-    const fallbackMessage = formatErrorMessage(
-      fallbackError,
-      'Direct handleOps fallback failed'
-    );
+    const fallbackMessage = formatErrorMessage(fallbackError, 'Direct handleOps fallback failed');
     throw new Error(`${primaryMessage}. Direct fallback failed: ${fallbackMessage}`);
   }
 }

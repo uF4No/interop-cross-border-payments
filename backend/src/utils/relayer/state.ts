@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { getAddress, type Address } from 'viem';
+import { type Address, getAddress } from 'viem';
 
 import { FINALIZED_TXS_FILE, PENDING_TXS_FILE } from '../constants';
 import { env } from '../envConfig';

@@ -78,7 +78,10 @@ async function hasCode(address: Address, runtime?: ChainRuntime): Promise<boolea
   return !!code && code !== '0x';
 }
 
-async function validateFactoryCompatibility(factoryAddress: Address, runtime?: ChainRuntime): Promise<Address> {
+async function validateFactoryCompatibility(
+  factoryAddress: Address,
+  runtime?: ChainRuntime
+): Promise<Address> {
   const publicClient = getPublicClient(runtime);
   const executorAddress = getExecutorAddress(runtime);
   const ssoContracts = getSsoContracts(runtime);
@@ -117,7 +120,9 @@ async function validateFactoryCompatibility(factoryAddress: Address, runtime?: C
     );
   }
 
-  const implementationBytecode = await publicClient.getBytecode({ address: implementationFromBeacon });
+  const implementationBytecode = await publicClient.getBytecode({
+    address: implementationFromBeacon
+  });
   if (!implementationBytecode || implementationBytecode === '0x') {
     throw new Error(`Beacon implementation has no runtime bytecode at ${implementationFromBeacon}`);
   }
@@ -134,12 +139,16 @@ async function validateFactoryCompatibility(factoryAddress: Address, runtime?: C
 }
 
 export function getFactoryAddress(runtime?: ChainRuntime): Address {
-  return runtimeFactoryAddress.get(getRuntimeKey(runtime)) ?? (getSsoContracts(runtime).factory as Address);
+  return (
+    runtimeFactoryAddress.get(getRuntimeKey(runtime)) ??
+    (getSsoContracts(runtime).factory as Address)
+  );
 }
 
 export async function ensureFactoryDeployed(runtime?: ChainRuntime): Promise<Address> {
   const cacheKey = getRuntimeKey(runtime);
-  const configured = runtime?.ssoContracts.factory ?? (env.SSO_FACTORY_CONTRACT as Address | undefined);
+  const configured =
+    runtime?.ssoContracts.factory ?? (env.SSO_FACTORY_CONTRACT as Address | undefined);
   if (configured) {
     console.log(`Checking configured factory address: ${configured}`);
     const configuredHasCode = await hasCode(configured, runtime);

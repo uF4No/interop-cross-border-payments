@@ -19,7 +19,9 @@ export async function finalizeTx(
 
     // Step 1: Get receipt with L2-to-L1 logs
     console.log('📜 Getting receipt with L2-to-L1 logs...');
-    const receipt = (await sourceClient.zks.getReceiptWithL2ToL1(txHash)) as ReceiptWithL2ToL1 | null;
+    const receipt = (await sourceClient.zks.getReceiptWithL2ToL1(
+      txHash
+    )) as ReceiptWithL2ToL1 | null;
 
     if (!receipt || receipt.status !== '0x1') {
       console.log('❌ Transaction not found or not successful');

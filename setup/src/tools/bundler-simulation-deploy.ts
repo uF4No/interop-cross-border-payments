@@ -1,5 +1,5 @@
 import type { Abi, Address, Hex, Transport } from 'viem';
-import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
+import { http, createPublicClient, createWalletClient, defineChain } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
 import { execCmd } from './exec-cmd';
