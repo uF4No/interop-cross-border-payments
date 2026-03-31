@@ -11,6 +11,18 @@ This repository contains a cross-chain invoicing application built on ZKsync Pri
 - Foundry v1.0.0 or higher
 - Docker
 
+### Quay Authentication (Required for Prividium Images)
+
+Some Prividium component images are hosted in Quay under Matter Labs private access.
+Before running compose, authenticate to `quay.io` with credentials provided by the MatterLabs team.
+
+```bash
+DOCKER_USERNAME=matterlabs_enterprise+your_username
+DOCKER_PASSWORD=super_secret_provided_by_matterlabs
+
+docker login -u=$DOCKER_USERNAME -p=$DOCKER_PASSWORD quay.io
+```
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -91,6 +103,9 @@ To start the backend service run:
 pnpm dev:backend
 ```
 
+> [!IMPORTANT]
+> Start the backend and web-app services in separate terminals.
+
 ### 8. Start the web application
 
 The web app (in `./web-app`) is a Vue.js application that allows users to create and pay invoices across different chains.
@@ -100,9 +115,6 @@ To start the web app run:
 ```sh
 pnpm dev:web-app
 ```
-
-> [!IMPORTANT]
-> Start the web app and backend services in separate terminals.
 
 ### 9. Access the application
 
