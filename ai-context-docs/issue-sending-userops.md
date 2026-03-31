@@ -1,5 +1,7 @@
 # Issue: Sending `eth_sendUserOperation` for invoice creation from chain A
 
+**Important:** This issue was fixed.
+
 Last updated: **March 26, 2026**
 Workspace: `/Users/antonio/MatterLabs/cross-border`
 

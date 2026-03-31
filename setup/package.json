@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "init:env": "[ -f .env ] || cp .env.example .env",
     "setup": "pnpm run setup:3chain",
     "setup:3chain": "node ./scripts/run-tsx.mjs src/main.ts",
     "setup:update-permissions-compose": "node ./scripts/run-tsx.mjs src/update-permissions-compose.ts",

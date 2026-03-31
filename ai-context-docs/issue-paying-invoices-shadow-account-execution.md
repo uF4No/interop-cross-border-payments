@@ -1,5 +1,8 @@
 # Issue: Chain C shadow-account payment execution path
 
+**Important:** This issue was fixed.
+
+
 Last updated: **March 27, 2026**
 Workspace: `/Users/antonio/MatterLabs/cross-border`
 

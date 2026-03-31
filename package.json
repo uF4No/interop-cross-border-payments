@@ -8,6 +8,7 @@
     "dev:web-app": "pnpm --filter web-app dev",
     "dev:backend": "pnpm --filter sso-interop-backend dev",
     "setup-app": "pnpm --filter prividium-setup setup-app",
+    "setup:init-env": "pnpm -C setup run init:env",
     "setup:permissions": "pnpm -C setup run setup:permissions",
     "setup:update-permissions-compose": "pnpm -C setup run setup:update-permissions-compose",
     "setup": "pnpm -C setup run setup",
