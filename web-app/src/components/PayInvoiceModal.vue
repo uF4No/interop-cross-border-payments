@@ -224,13 +224,13 @@ onBeforeUnmount(() => {
       <div class="flex items-start justify-between gap-4 border-b border-slate-100 px-8 py-6">
         <div class="space-y-2">
           <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-            Pay Invoice
+            Settle Payment Request
           </p>
           <h3 class="text-2xl font-bold text-slate-900">
-            Invoice {{ invoice?.id ?? '...' }}
+            Payment request {{ invoice?.id ?? '...' }}
           </h3>
           <p class="text-sm text-slate-500">
-            Choose the token you want to pay with. The displayed amount is an {{ quoteType }} chain C quote.
+            Choose the token you want to settle with. The displayed amount is an {{ quoteType }} chain C quote.
           </p>
         </div>
 
@@ -302,7 +302,7 @@ onBeforeUnmount(() => {
           v-if="!hasSufficientBillingLiquidity"
           class="rounded-3xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
         >
-          <p class="font-semibold">InvoicePayment lacks billed-token liquidity.</p>
+          <p class="font-semibold">Settlement contract lacks billed-token liquidity.</p>
           <p class="mt-1">
             Current billed-token balance: {{ formatAmount(billingLiquidityAmount) }} {{ billingTokenSymbol || 'TOKEN' }}. Payment is blocked until the chain C contract is replenished.
           </p>
@@ -404,7 +404,7 @@ onBeforeUnmount(() => {
             name="ArrowPathIcon"
             class="h-4 w-4 animate-spin"
           />
-          {{ isSubmitting ? 'Paying invoice...' : 'Confirm payment' }}
+          {{ isSubmitting ? 'Processing payment...' : 'Confirm payment' }}
         </button>
       </div>
     </div>

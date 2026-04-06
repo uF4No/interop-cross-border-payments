@@ -1,16 +1,16 @@
 # Web application
 
-This package contains the user-facing frontend for the cross-chain invoicing application.
+This package contains the user-facing frontend for the cross-border payments application.
 
 From the user’s perspective, the application supports the following workflow:
 
 - sign in to a Prividium environment,
 - register or select a passkey-based smart account,
 - view the linked wallet and available balances on the active chain,
-- create invoices that are submitted from chain A or B and created on chain C,
-- review invoice status in the dashboard,
-- retrieve available payment options for a specific invoice,
-- pay eligible invoices from the recipient chain,
+- create payment requests that are submitted from chain A or B and created on chain C,
+- review payment-request status in the dashboard,
+- retrieve available payment options for a specific payment request,
+- settle eligible payment requests from the recipient chain,
 - follow transaction progress while interop execution and settlement complete.
 
 In normal usage, the application is started from the repository root.
@@ -25,9 +25,9 @@ pnpm dev:web-app
 
 ## User experience
 
-The frontend is designed around the end-user journey rather than low-level blockchain operations. It guides the user through authentication, smart-account setup, invoice creation, invoice payment, and transaction tracking without requiring the user to interact with raw RPC calls or contract methods directly.
+The frontend is designed around the end-user journey rather than low-level blockchain operations. It guides the user through authentication, smart-account setup, payment-request creation, cross-border payment settlement, and transaction tracking without requiring the user to interact with raw RPC calls or contract methods directly.
 
-The application relies on the [backend service](../backend/README.md) for account deployment, invoice reads, and payment-option lookups, and it uses the generated contract configuration produced by the [setup script](../setup/README.md).
+The application relies on the [backend service](../backend/README.md) for account deployment, payment-request reads, and payment-option lookups, and it uses the generated contract configuration produced by the [setup script](../setup/README.md).
 
 ## Configuration
 

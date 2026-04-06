@@ -1,6 +1,6 @@
 # setup
 
-This package contains the setup tooling for the cross-chain invoicing project. It is responsible for deploying the required contracts, configuring permissions in Prividium, registering the application, validating the deployed SSO stack, and synchronizing generated contract addresses back into the project environment files.
+This package contains the setup tooling for the cross-border payments project. It is responsible for deploying the required contracts, configuring permissions in Prividium, registering the application, validating the deployed SSO stack, and synchronizing generated contract addresses back into the project environment files.
 
 In normal usage, this package is not run directly. Users typically run the root-level setup command from the repository root, and that command delegates into this package.
 
@@ -53,7 +53,7 @@ These commands can be run from the `setup/` directory when you need to execute i
   Runs the system-level setup tasks, including SSO contract deployment and permission configuration.
 
 - `pnpm setup:app`  
-  Runs the application-level setup tasks, including invoicing contract deployment and registration.
+  Runs the application-level setup tasks, including payment-flow contract deployment and registration.
 
 - `pnpm setup-app`  
   Registers the OAuth application only.

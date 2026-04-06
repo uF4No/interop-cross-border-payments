@@ -3,14 +3,14 @@
     <div class="flex flex-col items-center justify-center text-center py-10 space-y-6">
       <div class="space-y-4 max-w-3xl">
         <p class="text-[11px] font-black uppercase tracking-[0.28em] text-slate-400">
-          Cross-Chain Invoice Desk
+          Cross-Border Payments Desk
         </p>
         <h2 class="text-4xl font-bold text-slate-900 tracking-tight text-balance">
-          Cross-chain invoicing and settlement
+          Cross-border payments and settlement
         </h2>
         <p class="text-base leading-relaxed text-slate-500">
-          Invoice creation submits real interop bundles to chain C. Invoice payment now bridges
-          funds from the active source chain into your chain C shadow account before settling on
+          Payment requests submit real interop bundles to chain C. Settlement bridges funds from
+          the active source chain into your chain C shadow account before completing on
           <span class="font-semibold text-slate-700">InvoicePayment</span>.
         </p>
       </div>
@@ -21,7 +21,7 @@
             <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Wallet Balances</p>
             <h3 class="text-lg font-bold text-slate-900">{{ sourceChainLabel }} Assets</h3>
             <p class="text-sm text-slate-500">
-              Native {{ balanceRows[0]?.asset || 'ETH' }} and configured invoice tokens for the active source chain.
+              Native {{ balanceRows[0]?.asset || 'ETH' }} and configured settlement tokens for the active source chain.
             </p>
             <div class="flex flex-wrap items-center gap-2 pt-1">
               <span
@@ -144,7 +144,7 @@
         @click="copyContractAddress"
       >
         <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">
-          Chain C InvoicePayment
+          Chain C Settlement Contract
         </span>
         <span class="text-xs font-mono text-slate-500">
           {{ destinationInvoicePaymentAddress?.slice(0, 10) }}...{{ destinationInvoicePaymentAddress?.slice(-8) }}
@@ -163,7 +163,7 @@
           @click="openCreateInvoiceModal"
         >
           <BaseIcon name="PlusCircleIcon" class="w-5 h-5" />
-          {{ isInvoiceProcessing ? 'Interop in Progress' : 'New Invoice' }}
+          {{ isInvoiceProcessing ? 'Interop in Progress' : 'New Payment Request' }}
         </button>
         <button
           class="enterprise-button-secondary min-w-[200px] h-14 text-base font-semibold"
@@ -171,7 +171,7 @@
           @click="refreshInvoiceTable"
         >
           <BaseIcon name="ArrowPathIcon" class="w-5 h-5" />
-          Refresh invoices
+          Refresh payment requests
         </button>
       </div>
     </div>
@@ -280,7 +280,7 @@
           >
             <div class="space-y-1">
               <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                {{ tx.interop.flow === 'pay' ? 'Invoice Payment Flow' : 'Invoice Creation Flow' }}
+                {{ tx.interop.flow === 'pay' ? 'Cross-Border Payment Flow' : 'Payment Request Flow' }}
               </p>
               <p class="text-sm text-slate-600">{{ tx.interop.message }}</p>
               <p class="text-xs text-slate-400">{{ tx.interop.summary }}</p>
@@ -454,8 +454,8 @@ type InvoiceTableCardExposed = {
 const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   {
     id: 'create-validate',
-    label: 'Validate invoice',
-    description: 'Check invoice fields, source-chain context, and the configured chain C route.'
+    label: 'Validate payment request',
+    description: 'Check payment details, source-chain context, and the configured chain C route.'
   },
   {
     id: 'create-submit',
@@ -471,8 +471,8 @@ const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   },
   {
     id: 'create-confirm',
-    label: 'Confirm invoice on chain C',
-    description: 'Detect the new invoice on chain C. Creation moves no ERC20 tokens.'
+    label: 'Confirm payment request on chain C',
+    description: 'Detect the new payment request on chain C. Creation moves no ERC20 tokens.'
   }
 ] as const;
 const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
@@ -480,7 +480,7 @@ const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
     id: 'pay-validate',
     label: 'Validate payment route',
     description:
-      'Check invoice state, payer wallet ownership, and whether chain C settlement can proceed.'
+      'Check payment-request state, payer wallet ownership, and whether chain C settlement can proceed.'
   },
   {
     id: 'pay-prepare',
@@ -502,9 +502,9 @@ const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   },
   {
     id: 'pay-confirm',
-    label: 'Confirm invoice paid',
+    label: 'Confirm payment settled',
     description:
-      'Wait for chain C to mark the invoice paid. Any cross-chain creator payout happens later in the backend.'
+      'Wait for chain C to mark the payment request paid. Any cross-chain creator payout happens later in the backend.'
   }
 ] as const;
 const INVOICE_POLL_INTERVAL_MS = 10000;
@@ -1333,14 +1333,14 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
   interopError.value = '';
   processingInvoiceId.value = '';
   createInvoiceBannerTone.value = 'info';
-  createInvoiceBanner.value = 'Validating invoice request before cross-chain submission.';
+  createInvoiceBanner.value = 'Validating payment request before cross-border submission.';
   interopFlow.value = 'create';
   interopStepDetails.value = {};
   setInteropProgress(
     'create',
     'create-validate',
-    'Validating invoice payload and loading a baseline invoice snapshot.',
-    'Checking invoice fields, wallet context, and the configured chain C billing token before sending a single createInvoice bundle.'
+    'Validating payment-request payload and loading a baseline snapshot.',
+    'Checking payment details, wallet context, and the configured chain C billing token before sending a single createInvoice bundle.'
   );
   interopSourceTxHash.value = '';
   interopBundleHash.value = '';
@@ -1360,7 +1360,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     'createInvoice()',
     'pending',
     'Preparing bundle...',
-    `Validating ${payload.billingTokenSymbol} invoice for chain C.`
+    `Validating ${payload.billingTokenSymbol} payment request for chain C.`
   );
   syncTransactionInterop(txId, 'create');
 
@@ -1392,7 +1392,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     interopSourceTxHash.value = result.transactionHash;
     interopBundleHash.value = result.bundleHash ?? '';
     createInvoiceBanner.value =
-      'Source transaction confirmed. Waiting for the invoice to appear on chain C.';
+      'Source transaction confirmed. Waiting for the payment request to appear on chain C.';
     setInteropStepDetail(
       'create-submit',
       result.bundleHash
@@ -1437,12 +1437,12 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
 
     interopInvoiceId.value = createdInvoice.id;
     createInvoiceBannerTone.value = 'success';
-    createInvoiceBanner.value = `Invoice ${createdInvoice.id} created on chain C. Source tx ${truncateHash(result.transactionHash)}.`;
+    createInvoiceBanner.value = `Payment request ${createdInvoice.id} created on chain C. Source tx ${truncateHash(result.transactionHash)}.`;
     completeInteropProgress(
       'create',
       'create-confirm',
-      `Invoice ${createdInvoice.id} was created on chain C.`,
-      `Invoice ${createdInvoice.id} is now visible on chain C. No ERC20 transfer was needed for this flow.`
+      `Payment request ${createdInvoice.id} was created on chain C.`,
+      `Payment request ${createdInvoice.id} is now visible on chain C. No ERC20 transfer was needed for this flow.`
     );
     syncTransactionInterop(txId, 'create');
 
@@ -1463,12 +1463,12 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     updateTransaction(txId, {
       status: 'success',
       hash: result.transactionHash,
-      detail: `Invoice ${createdInvoice.id} confirmed on chain C.`
+      detail: `Payment request ${createdInvoice.id} confirmed on chain C.`
     });
     void refreshBalances();
     refreshInvoiceTable();
   } catch (error) {
-    interopError.value = formatTransactionError(error, 'Failed to create invoice on chain C.');
+    interopError.value = formatTransactionError(error, 'Failed to create payment request on chain C.');
     errorMessage.value = interopError.value;
     createInvoiceBannerTone.value = 'error';
     createInvoiceBanner.value = interopError.value;
@@ -1503,12 +1503,12 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     payInvoiceHasSufficientBillingLiquidity.value = responseObject.hasSufficientBillingLiquidity;
 
     if (filteredOptions.length === 0) {
-      payInvoiceOptionsError.value = `No quoteable payment tokens are configured on ${sourceChainLabel.value} for invoice ${invoice.id}.`;
+      payInvoiceOptionsError.value = `No quoteable payment tokens are configured on ${sourceChainLabel.value} for payment request ${invoice.id}.`;
     }
   } catch (error) {
     payInvoiceOptionsError.value = formatTransactionError(
       error,
-      `Failed to load payment options for invoice ${invoice.id}.`
+      `Failed to load payment options for payment request ${invoice.id}.`
     );
   } finally {
     payInvoiceOptionsLoading.value = false;
@@ -1529,8 +1529,8 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
   setInteropProgress(
     'pay',
     'pay-validate',
-    'Validating invoice payment, source-chain funding path, and chain C settlement readiness.',
-    `Checking invoice state, selected ${selectedOption.symbol} quote, payer wallet ownership, and whether chain C can settle the invoice before any funds move.`
+    'Validating payment settlement, source-chain funding path, and chain C readiness.',
+    `Checking payment-request state, selected ${selectedOption.symbol} quote, payer wallet ownership, and whether chain C can settle the request before any funds move.`
   );
   interopSourceTxHash.value = '';
   interopBundleHash.value = '';
@@ -1540,22 +1540,22 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     `payInvoice(${invoice.id})`,
     'pending',
     'Preparing bundle...',
-    `Validating invoice payment for chain C using ${selectedOption.symbol}.`
+    `Validating payment settlement for chain C using ${selectedOption.symbol}.`
   );
   syncTransactionInterop(txId, 'pay');
 
   try {
     if (invoice.status.trim().toLowerCase() !== 'created') {
-      throw new Error(`Invoice ${invoice.id} is ${invoice.status} and cannot be paid.`);
+      throw new Error(`Payment request ${invoice.id} is ${invoice.status} and cannot be paid.`);
     }
     if (activeChainId.value !== invoice.recipientChainId) {
       throw new Error(
-        `Invoice ${invoice.id} can only be paid from chain ${invoice.recipientChainId}. Switch to the recipient chain and retry.`
+        `Payment request ${invoice.id} can only be paid from chain ${invoice.recipientChainId}. Switch to the recipient chain and retry.`
       );
     }
     if (!invoice.sourceTags.includes('pending')) {
       throw new Error(
-        `Invoice ${invoice.id} is not assigned to the connected wallet. Re-fetch invoices with the intended recipient account and retry.`
+        `Payment request ${invoice.id} is not assigned to the connected wallet. Re-fetch payment requests with the intended recipient account and retry.`
       );
     }
     if (!ssoAccount.value) {
@@ -1565,7 +1565,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     }
     if (ssoAccount.value.toLowerCase() !== invoice.recipientRefundAddress.toLowerCase()) {
       throw new Error(
-        `Active account ${ssoAccount.value} does not match invoice recipient ${invoice.recipientRefundAddress}. Re-select the matching passkey account and retry.`
+        `Active account ${ssoAccount.value} does not match payment recipient ${invoice.recipientRefundAddress}. Re-select the matching passkey account and retry.`
       );
     }
     if (payInvoiceDisableReason.value) {
@@ -1580,7 +1580,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       !paymentPreflight.hasSufficientInvoicePaymentBalance
     ) {
       throw new Error(
-        `InvoicePayment on chain C has ${formatEthAmount(paymentPreflight.invoicePaymentBalance)} ETH but needs at least ${formatEthAmount(paymentPreflight.crossChainFee)} ETH to forward billed funds to chain ${invoice.creatorChainId}. Top up the chain C invoice contract and retry.`
+        `InvoicePayment on chain C has ${formatEthAmount(paymentPreflight.invoicePaymentBalance)} ETH but needs at least ${formatEthAmount(paymentPreflight.crossChainFee)} ETH to forward billed funds to chain ${invoice.creatorChainId}. Top up the chain C settlement contract and retry.`
       );
     }
 
@@ -1594,7 +1594,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     );
     updateTransaction(txId, {
       hash: 'Authorizing passkey...',
-      detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for invoice ${invoice.id} with ${selectedOption.symbol}.`
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for payment request ${invoice.id} with ${selectedOption.symbol}.`
     });
     syncTransactionInterop(txId, 'pay');
 
@@ -1660,13 +1660,13 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       'pay',
       'pay-settle',
       'Authorizing the settlement bundle that approves the destination token and calls payInvoice on chain C.',
-      `Signing the second interop stage so the payer shadow account can approve InvoicePayment and settle the invoice on chain C in ${selectedOption.symbol}.`
+      `Signing the second interop stage so the payer shadow account can approve InvoicePayment and settle the payment request on chain C in ${selectedOption.symbol}.`
     );
     interopSourceTxHash.value = '';
     interopBundleHash.value = '';
     updateTransaction(txId, {
       hash: 'Authorizing settlement...',
-      detail: `Authorizing ${sourceChainLabel.value} wallet session to approve ${selectedOption.symbol} on chain C and settle invoice ${invoice.id}.`
+      detail: `Authorizing ${sourceChainLabel.value} wallet session to approve ${selectedOption.symbol} on chain C and settle payment request ${invoice.id}.`
     });
     syncTransactionInterop(txId, 'pay');
 
@@ -1688,16 +1688,16 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     setInteropProgress(
       'pay',
       'pay-confirm',
-      'Settlement bundle confirmed. Waiting for invoice status to change to paid on chain C.',
-      `Waiting for invoice ${invoice.id} to be marked paid on chain C. If the creator lives on another chain, the later payout bridge is handled by the backend worker.`
+      'Settlement bundle confirmed. Waiting for payment status to change to paid on chain C.',
+      `Waiting for payment request ${invoice.id} to be marked paid on chain C. If the creator lives on another chain, the later payout bridge is handled by the backend worker.`
     );
     syncTransactionInterop(txId, 'pay');
 
     updateTransaction(txId, {
       hash: settlementResult.transactionHash,
       detail: settlementResult.bundleHash
-        ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for invoice ${invoice.id} to be marked paid.`
-        : `Settlement transaction confirmed. Waiting for invoice ${invoice.id} to be marked paid.`
+        ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for payment request ${invoice.id} to be marked paid.`
+        : `Settlement transaction confirmed. Waiting for payment request ${invoice.id} to be marked paid.`
     });
 
     const paidInvoice = await waitForInvoiceStatus(invoice.id, 'paid');
@@ -1706,15 +1706,15 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     completeInteropProgress(
       'pay',
       'pay-confirm',
-      `Invoice ${paidInvoice.id} was paid on chain C.`,
-      `Invoice ${paidInvoice.id} is now marked paid on chain C. Any creator payout to another chain will happen in the backend payout stage.`
+      `Payment request ${paidInvoice.id} was paid on chain C.`,
+      `Payment request ${paidInvoice.id} is now marked paid on chain C. Any creator payout to another chain will happen in the backend payout stage.`
     );
     syncTransactionInterop(txId, 'pay');
 
     updateTransaction(txId, {
       status: 'success',
       hash: settlementResult.transactionHash,
-      detail: `Invoice ${paidInvoice.id} marked paid on chain C.`
+      detail: `Payment request ${paidInvoice.id} marked paid on chain C.`
     });
 
     void refreshBalances();
@@ -1722,7 +1722,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
   } catch (error) {
     interopError.value = formatTransactionError(
       error,
-      `Failed to pay invoice ${invoice.id} on chain C.`
+      `Failed to settle payment request ${invoice.id} on chain C.`
     );
     errorMessage.value = interopError.value;
     failInteropProgress(interopError.value);
@@ -1745,7 +1745,7 @@ onMounted(() => {
   }
 
   if (!currentInteropCenterAddress.value || !destinationInvoicePaymentAddress.value) {
-    errorMessage.value = 'Missing interop contract configuration for the active invoice route.';
+    errorMessage.value = 'Missing interop contract configuration for the active payment route.';
   }
 });
 </script>
