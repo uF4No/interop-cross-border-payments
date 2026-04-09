@@ -1,6 +1,6 @@
 # Backend server
 
-This package provides the backend service for the cross-chain invoicing application. It exposes account deployment, interop, funding, and invoice-read APIs used by the web application, and it also runs background workers that process pending interop transactions and invoice payouts.
+This package provides the backend service for the cross-border payments application. It exposes account deployment, interop, funding, and payment-request APIs used by the web application, and it also runs background workers that process pending interop transactions and deferred creator payouts.
 
 In normal usage, the service is started from the repository root.
 
@@ -53,7 +53,7 @@ When the backend starts, it also runs background workers that:
 
 - process queued interop transactions,
 - finalize transactions once they are fully executed,
-- process deferred invoice payouts.
+- process deferred creator payouts.
 
 ## Configuration
 

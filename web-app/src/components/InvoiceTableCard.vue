@@ -69,11 +69,11 @@ const selectedRelationshipLabel = computed(
 const selectedStatusLabel = computed(() => statusFilterLabels[selectedStatusFilter.value]);
 
 const emptyStateTitle = computed(() => {
-  return `No ${selectedRelationshipLabel.value.toLowerCase()} ${selectedStatusLabel.value.toLowerCase()} invoices`;
+  return `No ${selectedRelationshipLabel.value.toLowerCase()} ${selectedStatusLabel.value.toLowerCase()} payment requests`;
 });
 
 const emptyStateDescription = computed(() => {
-  return `The connected wallet does not have any ${selectedRelationshipLabel.value.toLowerCase()} invoices with ${selectedStatusLabel.value.toLowerCase()} status.`;
+  return `The connected wallet does not have any ${selectedRelationshipLabel.value.toLowerCase()} payment requests with ${selectedStatusLabel.value.toLowerCase()} status.`;
 });
 
 const statusClassMap: Record<string, string> = {
@@ -250,18 +250,18 @@ const payButtonLabel = (invoice: InvoiceRecord) => {
 const payButtonTitle = (invoice: InvoiceRecord) => {
   const status = normalizeInvoiceStatus(invoice);
   if (status !== 'created') {
-    return `Invoice is already ${status}.`;
+    return `Payment request is already ${status}.`;
   }
   if (!invoice.sourceTags.includes('pending')) {
-    return 'Only invoices assigned to the connected wallet can be paid.';
+    return 'Only payment requests assigned to the connected wallet can be paid.';
   }
   if (props.isInteropProcessing) {
     return 'Another interop transaction is already in progress.';
   }
   if (props.activeChainId !== invoice.recipientChainId) {
-    return `This invoice can only be paid from ${formatChainLabel(invoice.recipientChainId)}.`;
+    return `This payment request can only be paid from ${formatChainLabel(invoice.recipientChainId)}.`;
   }
-  return 'Pay this invoice from the active recipient chain.';
+  return 'Pay this request from the active recipient chain.';
 };
 
 const handlePayClick = (invoice: InvoiceRecord) => {
@@ -281,13 +281,13 @@ defineExpose({
     <div class="px-8 py-6 border-b border-slate-100 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
       <div class="space-y-3">
         <div class="flex items-center gap-3">
-          <h4 class="text-lg font-bold text-slate-900">Invoices</h4>
+          <h4 class="text-lg font-bold text-slate-900">Payment Requests</h4>
           <span class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
             {{ totalInvoices }} shown
           </span>
         </div>
         <p class="text-sm text-slate-500">
-          Fetches every chain C invoice once, then filters locally for the connected wallet.
+          Fetches every chain C payment request once, then filters locally for the connected wallet.
         </p>
         <div class="flex flex-wrap items-center gap-2">
           <span
@@ -367,14 +367,14 @@ defineExpose({
           :class="{ 'animate-spin': isManualRefreshing }"
           class="w-4 h-4"
         />
-        {{ isManualRefreshing ? 'Refreshing invoices' : 'Refresh invoices' }}
+        {{ isManualRefreshing ? 'Refreshing payment requests' : 'Refresh payment requests' }}
       </button>
     </div>
 
     <div v-if="showInitialLoadingState" class="px-8 py-12 space-y-4">
       <div class="flex items-center gap-3 text-slate-500">
         <BaseIcon name="ArrowPathIcon" class="w-5 h-5 animate-spin" />
-        <span class="text-sm font-medium">Loading invoices...</span>
+        <span class="text-sm font-medium">Loading payment requests...</span>
       </div>
       <div class="space-y-3">
         <div
@@ -391,7 +391,7 @@ defineExpose({
       <div class="rounded-3xl border border-red-100 bg-red-50 px-6 py-6 flex items-start gap-4">
         <BaseIcon name="ExclamationTriangleIcon" class="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
         <div class="min-w-0 flex-1">
-          <p class="text-sm font-semibold text-red-900">Unable to load invoices.</p>
+          <p class="text-sm font-semibold text-red-900">Unable to load payment requests.</p>
           <p class="mt-1 text-sm text-red-800" style="overflow-wrap:anywhere;">
             {{ errorMessage }}
           </p>
@@ -410,7 +410,7 @@ defineExpose({
         v-if="showInlineErrorNotice"
         class="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800"
       >
-        Unable to refresh invoices. Showing the last loaded snapshot.
+        Unable to refresh payment requests. Showing the last loaded snapshot.
         <span class="mt-1 block" style="overflow-wrap:anywhere;">{{ errorMessage }}</span>
       </div>
 

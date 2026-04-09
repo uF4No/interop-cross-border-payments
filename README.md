@@ -1,6 +1,6 @@
-# ZKsync Prividium: Cross Chain Invoicing
+# ZKsync Prividium: Cross-Border Payments
 
-This repository contains a cross-chain invoicing application built on ZKsync Prividium. It combines smart contracts, a backend API, and a Vue frontend so users can authenticate with passkey-based SSO smart accounts, create invoices from one Prividium chain, and settle them on chain C through the interop flow.
+This repository contains a cross-border payments application built on ZKsync Prividium. It combines smart contracts, a backend API, and a Vue frontend so users can authenticate with passkey-based SSO smart accounts, create payment requests from one Prividium chain, and settle them on chain C through the interop flow.
 
 ## Requirements
 
@@ -69,7 +69,7 @@ This works even in a plain copied directory that is not a git checkout, so you d
 
 ### 5. Deploy contracts and configure permissions
 
-The setup script deploys the SSO contracts, configures the required permissions, creates the application in Prividium, and deploys the invoicing contracts.
+The setup script deploys the SSO contracts, configures the required permissions, creates the application in Prividium, and deploys the smart contracts that support the cross-border payment flow.
 
 Review `setup/.env` and update the environment variables, target Prividium chain and API endpoints, application client name, and related settings as needed. `setup/.env.example` provides the default template.
 
@@ -95,7 +95,7 @@ docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --fo
 
 ### 7. Start the backend service
 
-The backend service (in `./backend`) provides endpoints for SSO smart account deployment from the web app (in `./web-app`) and invoice retrieval.
+The backend service (in `./backend`) provides endpoints for SSO smart account deployment from the web app (in `./web-app`) and payment-request retrieval.
 
 To start the backend service run:
 
@@ -108,7 +108,7 @@ pnpm dev:backend
 
 ### 8. Start the web application
 
-The web app (in `./web-app`) is a Vue.js application that allows users to create and pay invoices across different chains.
+The web app (in `./web-app`) is a Vue.js application that allows users to create payment requests and settle cross-border payments across different chains.
 
 To start the web app run:
 
@@ -118,16 +118,16 @@ pnpm dev:web-app
 
 ### 9. Access the application
 
-Navigate to [http://localhost:5000](http://localhost:5000) and sign in with a Prividium user account (for example, `user@local.dev` / `password`). Register a passkey-based account, then use the application to create and pay invoices.
+Navigate to [http://localhost:5000](http://localhost:5000) and sign in with a Prividium user account (for example, `user@local.dev` / `password`). Register a passkey-based account, then use the application to create payment requests and settle them.
 
 Use two different browser profiles to authenticate in different chains (using different accounts) to simulate usage between two different entities.
 
 ## Repository Structure
 
 - [`setup/`](./setup): Setup scripts to deploy contracts and configure permissions in the ZKsync Prividium™ ecosystem.
-- [`contracts/`](./contracts): A Foundry-based project with the smart contracts for tokens and invoices.
+- [`contracts/`](./contracts): A Foundry-based project with the smart contracts that power payment requests and settlement.
 - [`backend/`](./backend): A Node.js backend service necessary for ZKsync SSO Smart Account deployment and interop transactions.
-- [`web-app/`](./web-app): A Vue 3 + TypeScript frontend demonstrating Prividium authentication and a cross-chain invoicing workflow.
+- [`web-app/`](./web-app): A Vue 3 + TypeScript frontend demonstrating Prividium authentication and a cross-border payments workflow.
 
 ## Configuration Source of Truth
 

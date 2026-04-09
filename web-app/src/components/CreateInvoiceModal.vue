@@ -33,8 +33,8 @@ type Props = {
 };
 
 const props = withDefaults(defineProps<Props>(), {
-  title: 'Create Invoice',
-  subtitle: 'Prepare a cross-chain invoice using one of the deployed tokens.',
+  title: 'Create Payment Request',
+  subtitle: 'Prepare a cross-border payment request using one of the deployed tokens.',
   initialValues: () => ({})
 });
 
@@ -296,7 +296,7 @@ onBeforeUnmount(() => {
             <div class="flex items-start justify-between gap-6 border-b border-slate-100 px-6 py-5 sm:px-8">
               <div class="space-y-1">
                 <p class="text-[10px] font-black uppercase tracking-[0.28em] text-slate-400">
-                  Invoice workflow
+                  Payment request workflow
                 </p>
                 <h2 class="text-2xl font-bold tracking-tight text-slate-900">
                   {{ title }}
@@ -321,7 +321,7 @@ onBeforeUnmount(() => {
                   v-if="showErrors && hasErrors"
                   class="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800"
                 >
-                  Please fix the highlighted fields before creating the invoice.
+                  Please fix the highlighted fields before creating the payment request.
                 </div>
 
                 <div class="grid gap-4 md:grid-cols-2">
@@ -445,7 +445,7 @@ onBeforeUnmount(() => {
                     v-model="form.text"
                     rows="5"
                     maxlength="280"
-                    placeholder="Optional invoice description"
+                    placeholder="Optional payment note"
                     class="enterprise-input enterprise-textarea w-full px-4 py-3"
                     :class="visibleError('text') ? 'border-rose-300 bg-rose-50/60 focus:border-rose-400 focus:ring-rose-100' : ''"
                     @blur="markTouched('text')"
@@ -472,7 +472,7 @@ onBeforeUnmount(() => {
                 :disabled="!invoiceTokenOptions.length"
               >
                 <BaseIcon name="PlusCircleIcon" class="h-5 w-5" />
-                Create invoice
+                Create payment request
               </button>
             </div>
           </form>
