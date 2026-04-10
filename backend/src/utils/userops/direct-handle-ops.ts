@@ -29,6 +29,9 @@ const entryPointAbi = parseAbi([
 const interopCenterAbi = parseAbi([
   'event InteropBundleSent(bytes32 l2l1MsgHash, bytes32 interopBundleHash, (bytes1 version, uint256 sourceChainId, uint256 destinationChainId, bytes32 interopBundleSalt, (bytes1 version, bool shadowAccount, address to, address from, uint256 value, bytes data)[] calls, (bytes executionAddress, bytes unbundlerAddress) bundleAttributes) interopBundle)'
 ]);
+const privateInteropCenterAbi = parseAbi([
+  'event InteropBundleSent(bytes32 l2l1MsgHash, bytes32 interopBundleHash, (bytes1 version, uint256 sourceChainId, uint256 destinationChainId, bytes32 destinationBaseTokenAssetId, bytes32 interopBundleSalt, (bytes1 version, bool shadowAccount, address to, address from, uint256 value, bytes data)[] calls, (bytes executionAddress, bytes unbundlerAddress, bool useFixedFee) bundleAttributes) interopBundle)'
+]);
 
 export type RpcUserOpV08 = {
   sender: Address;
@@ -135,16 +138,28 @@ function extractBundleHash(params: {
   }[];
   interopCenter?: Address;
 }): Hex | undefined {
-  if (!params.interopCenter) {
-    return undefined;
-  }
-
-  const normalizedInteropCenter = params.interopCenter.toLowerCase();
   for (const log of params.logs) {
-    if (log.address.toLowerCase() !== normalizedInteropCenter) {
+    if (log.topics.length === 0) {
       continue;
     }
-    if (log.topics.length === 0) {
+    if (
+      params.interopCenter &&
+      log.address.toLowerCase() !== params.interopCenter.toLowerCase()
+    ) {
+      try {
+        const privateDecoded = decodeEventLog({
+          abi: privateInteropCenterAbi,
+          data: log.data,
+          topics: log.topics as [Hex, ...Hex[]]
+        });
+
+        if (privateDecoded.eventName === 'InteropBundleSent') {
+          return privateDecoded.args.interopBundleHash;
+        }
+      } catch {
+        // Ignore unrelated logs.
+      }
+
       continue;
     }
 
@@ -159,7 +174,19 @@ function extractBundleHash(params: {
         return decoded.args.interopBundleHash;
       }
     } catch {
-      // Ignore unrelated logs from the same contract.
+      try {
+        const privateDecoded = decodeEventLog({
+          abi: privateInteropCenterAbi,
+          data: log.data,
+          topics: log.topics as [Hex, ...Hex[]]
+        });
+
+        if (privateDecoded.eventName === 'InteropBundleSent') {
+          return privateDecoded.args.interopBundleHash;
+        }
+      } catch {
+        // Ignore unrelated logs.
+      }
     }
   }
 

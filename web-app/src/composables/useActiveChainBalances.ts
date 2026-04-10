@@ -55,8 +55,7 @@ function readFirstDefined(...keys: string[]) {
 function readTokenAddress(symbol: TokenSymbol, chainKey: 'A' | 'B'): Address | undefined {
   const candidates = [
     `VITE_TOKEN_${symbol}_ADDRESS_CHAIN_${chainKey}`,
-    `VITE_${symbol}_TOKEN_ADDRESS_CHAIN_${chainKey}`,
-    `VITE_TOKEN_${symbol}_ADDRESS`
+    `VITE_${symbol}_TOKEN_ADDRESS_CHAIN_${chainKey}`
   ] as const;
 
   for (const envKey of candidates) {
@@ -90,7 +89,7 @@ function addThousandsSeparators(value: string) {
 
 function formatTokenBalance(value: bigint, decimals: number) {
   const [whole, fraction = ''] = formatUnits(value, decimals).split('.');
-  const trimmedFraction = fraction.slice(0, 6).replace(/0+$/g, '');
+  const trimmedFraction = fraction.slice(0, 2).replace(/0+$/g, '');
   const normalizedWhole = whole === '' ? '0' : addThousandsSeparators(whole);
   return trimmedFraction ? `${normalizedWhole}.${trimmedFraction}` : normalizedWhole;
 }

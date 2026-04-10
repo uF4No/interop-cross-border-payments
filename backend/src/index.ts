@@ -1,6 +1,9 @@
 import { app, logger, stopWorker } from '@/server';
+import { initRuntimeLogging } from '@/utils/runtimeLogging';
 
 import { env } from './utils/envConfig';
+
+initRuntimeLogging();
 
 const server = app.listen(env.PORT, () => {
   const { NODE_ENV, HOST, PORT } = env;

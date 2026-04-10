@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { type Address, type Chain, type Transport, createPublicClient } from 'viem';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BaseIcon from '../components/BaseIcon.vue';
 import { getPrividiumBranding, usePrividium } from '../composables/usePrividium';
@@ -41,6 +41,9 @@ const passkeyStep = ref<'idle' | 'checking' | 'creating' | 'deploying' | 'done'>
 const setupMode = ref<'create' | 'existing' | null>(null);
 const setupSelection = ref<'create' | 'existing'>('create');
 const completedAccountAddress = ref<string | null>(null);
+const welcomeName = computed(
+  () => userProfile.value?.displayName?.trim() || passkeyUsername.value.trim() || 'there'
+);
 
 watch(isAuthenticated, (next) => {
   if (next) {
@@ -256,7 +259,7 @@ const resetSetup = () => {
           <p class="text-slate-500 text-sm">
             {{
               isAuthenticated
-                ? 'Set up your secure smart wallet to deploy and link it with your Prividium profile.'
+                ? 'Complete your secure account setup and confirm the profile you want to use in the app.'
                 : 'Please authenticate to access your dashboard.'
             }}
           </p>
@@ -408,15 +411,15 @@ const resetSetup = () => {
               </div>
 
               <div class="min-w-0 flex-1">
-                <p class="text-2xl font-semibold text-slate-900 leading-tight">Deploy & Link Smart Wallet</p>
+                <p class="text-2xl font-semibold text-slate-900 leading-tight">Finish Account Setup</p>
                 <p class="text-sm text-slate-500 mt-1">
                   {{
                     passkeyStep === 'deploying'
-                      ? 'Deploying wallet, funding it, and linking it to your Prividium profile.'
+                      ? 'Preparing your account and connecting it to your profile.'
                       : passkeyStep === 'done' && setupMode === 'create'
-                        ? 'Smart wallet deployed and linked.'
+                        ? 'Account created and ready to use.'
                         : passkeyStep === 'done' && setupMode === 'existing'
-                          ? 'Skipped. Existing linked passkey selected.'
+                          ? 'Skipped. Existing account selected.'
                           : 'This step starts after passkey setup.'
                   }}
                 </p>
@@ -434,12 +437,9 @@ const resetSetup = () => {
                 <p class="text-base font-semibold text-green-900">
                   {{
                     setupMode === 'create'
-                      ? 'Smart account deployed and linked to your Prividium profile.'
-                      : 'Passkey selected successfully.'
+                      ? `Welcome ${welcomeName}, your account is ready to use.`
+                      : `Welcome back, ${welcomeName}. Account selected successfully.`
                   }}
-                </p>
-                <p v-if="completedAccountAddress" class="mt-1 text-sm text-green-800 break-all">
-                  Account: {{ completedAccountAddress }}
                 </p>
               </div>
               <div class="flex gap-2">

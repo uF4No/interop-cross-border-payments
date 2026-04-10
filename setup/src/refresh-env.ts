@@ -3,6 +3,9 @@ import { intro, outro } from '@clack/prompts';
 import { assertDotEnv, extractConfigOptional } from './tools/config-tools';
 import { resolveContractsConfigPath } from './tools/contracts-config';
 import { syncEnvFromContractsConfig } from './tools/env-sync';
+import { initRuntimeLogging } from './tools/runtime-logging';
+
+initRuntimeLogging('setup-refresh-env');
 
 async function main() {
   intro('Refreshing env from contracts config...');

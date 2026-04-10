@@ -3,6 +3,11 @@ import { formatUnits } from 'viem';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 import type { InvoicePaymentOption, InvoiceRecord } from '@/types/invoices';
+import {
+  buildExplorerAddressUrl,
+  buildExplorerTokenUrl,
+  getExplorerChainKeyForChainId
+} from '@/utils/explorer';
 import BaseIcon from './BaseIcon.vue';
 
 type Props = {
@@ -120,6 +125,21 @@ const configuredChainLabels = new Map<number, string>(
 
 const formatChainLabel = (chainId: number) =>
   configuredChainLabels.get(chainId) ?? `Chain ${chainId}`;
+
+const billingTokenExplorerHref = computed(() =>
+  props.invoice ? buildExplorerTokenUrl('C', props.invoice.billingToken) : undefined
+);
+
+const creatorRefundExplorerHref = computed(() => {
+  if (!props.invoice) {
+    return undefined;
+  }
+
+  const chainKey = getExplorerChainKeyForChainId(props.invoice.creatorChainId);
+  return chainKey
+    ? buildExplorerAddressUrl(chainKey, props.invoice.creatorRefundAddress)
+    : undefined;
+});
 
 const selectedFxRate = computed(() => {
   if (!props.invoice || !selectedOption.value || selectedOption.value.isBillingToken) {
@@ -255,7 +275,21 @@ onBeforeUnmount(() => {
               >
                 {{ formatAmount(invoice.amount, { maxDecimals: 2 }) }} {{ billingTokenSymbol || 'TOKEN' }}
               </p>
-              <p class="mt-2 text-xs font-mono text-slate-500" style="overflow-wrap:anywhere;">
+              <a
+                v-if="billingTokenExplorerHref"
+                :href="billingTokenExplorerHref"
+                target="_blank"
+                rel="noreferrer"
+                class="mt-2 block text-xs font-mono text-slate-500 transition-colors hover:text-slate-700 hover:underline"
+                style="overflow-wrap:anywhere;"
+              >
+                {{ invoice.billingToken }}
+              </a>
+              <p
+                v-else
+                class="mt-2 text-xs font-mono text-slate-500"
+                style="overflow-wrap:anywhere;"
+              >
                 {{ invoice.billingToken }}
               </p>
             </div>
@@ -277,7 +311,19 @@ onBeforeUnmount(() => {
                   {{ formatChainLabel(invoice.creatorChainId) }}
                 </p>
               </div>
+              <a
+                v-if="creatorRefundExplorerHref"
+                :href="creatorRefundExplorerHref"
+                target="_blank"
+                rel="noreferrer"
+                class="text-xs font-mono text-slate-500 transition-colors hover:text-slate-700 hover:underline md:text-right"
+                style="overflow-wrap:anywhere;"
+                :title="invoice.creatorRefundAddress"
+              >
+                {{ truncateMiddle(invoice.creatorRefundAddress, 12, 8) }}
+              </a>
               <p
+                v-else
                 class="text-xs font-mono text-slate-500 md:text-right"
                 style="overflow-wrap:anywhere;"
                 :title="invoice.creatorRefundAddress"

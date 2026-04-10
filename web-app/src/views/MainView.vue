@@ -18,10 +18,10 @@
       <div class="enterprise-card w-full max-w-4xl overflow-hidden p-0 text-left">
         <div class="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div class="space-y-1">
-            <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Wallet Balances</p>
-            <h3 class="text-lg font-bold text-slate-900">{{ sourceChainLabel }} Assets</h3>
+            <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Account Overview</p>
+            <h3 class="text-lg font-bold text-slate-900">Welcome back, {{ userName }}.</h3>
             <p class="text-sm text-slate-500">
-              Native {{ balanceRows[0]?.asset || 'ETH' }} and configured settlement tokens for the active source chain.
+              Here is a snapshot of the balances currently available in your account.
             </p>
             <div class="flex flex-wrap items-center gap-2 pt-1">
               <span
@@ -39,37 +39,6 @@
             </div>
           </div>
 
-          <div class="flex flex-col items-start gap-3 md:items-end">
-            <span class="text-xs text-slate-500">
-              {{ ssoAccount ? truncateHash(ssoAccount, 8, 6) : 'Link a wallet to view balances.' }}
-            </span>
-            <div class="flex flex-wrap gap-2">
-              <button
-                class="enterprise-button-secondary h-11 px-4 py-0 text-sm"
-                :disabled="isBalancesManualRefreshing || !ssoAccount || isTokenFunding"
-                @click="refreshBalances"
-              >
-                <BaseIcon
-                  name="ArrowPathIcon"
-                  class="h-4 w-4"
-                  :class="isBalancesManualRefreshing ? 'animate-spin' : ''"
-                />
-                {{ isBalancesManualRefreshing ? 'Refreshing' : 'Refresh balances' }}
-              </button>
-              <button
-                class="enterprise-button-primary h-11 px-4 py-0 text-sm"
-                :disabled="!ssoAccount || isTokenFunding"
-                @click="fundTestTokens"
-              >
-                <BaseIcon
-                  name="CurrencyDollarIcon"
-                  class="h-4 w-4"
-                  :class="isTokenFunding ? 'animate-pulse' : ''"
-                />
-                {{ isTokenFunding ? 'Funding test funds...' : 'Get test funds' }}
-              </button>
-            </div>
-          </div>
         </div>
 
         <div class="px-6 py-5">
@@ -111,36 +80,112 @@
               <span class="mt-1 block" style="overflow-wrap:anywhere;">{{ balancesError }}</span>
             </div>
 
-            <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-slate-100">
-                <thead>
-                  <tr class="text-left text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                    <th class="pb-3 pr-4">Asset</th>
-                    <th class="pb-3 pr-4">Type</th>
-                    <th class="pb-3 pr-4">Balance</th>
-                    <th class="pb-3">Contract</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  <tr v-for="row in balanceRows" :key="row.asset">
-                    <td class="py-3 pr-4 text-sm font-bold text-slate-900">{{ row.asset }}</td>
-                    <td class="py-3 pr-4 text-sm text-slate-500">
-                      {{ row.type === 'native' ? 'Native' : 'ERC-20' }}
-                    </td>
-                    <td class="py-3 pr-4 text-sm font-semibold text-slate-700">{{ row.balance }}</td>
-                    <td class="py-3 text-xs font-mono text-slate-500">
-                      {{ row.address ? truncateHash(row.address, 10, 8) : 'Native asset' }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div v-if="visibleBalanceRows.length > 0" class="grid gap-4 md:grid-cols-3">
+              <div
+                v-for="row in visibleBalanceRows"
+                :key="row.asset"
+                class="rounded-3xl border border-slate-100 bg-white px-5 py-5 shadow-sm"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="space-y-1">
+                    <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Available balance</p>
+                    <h4 class="text-base font-bold text-slate-900">{{ row.asset }}</h4>
+                  </div>
+
+                  <div
+                    v-if="row.address"
+                    data-balance-menu
+                    class="relative"
+                  >
+                    <button
+                      type="button"
+                      class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500 transition-colors hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+                      @click.stop="toggleBalanceMenu(row.asset)"
+                    >
+                      <BaseIcon name="EllipsisHorizontalIcon" class="h-4 w-4" />
+                    </button>
+
+                    <div
+                      v-if="openBalanceMenuKey === row.asset"
+                      class="absolute right-0 top-11 z-10 w-64 rounded-2xl border border-slate-100 bg-white p-3 shadow-2xl"
+                      @click.stop
+                    >
+                      <p class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Asset details</p>
+                      <p class="mt-2 text-xs font-semibold text-slate-600">Contract address</p>
+                      <p class="mt-1 font-mono text-[11px] leading-relaxed text-slate-500" style="overflow-wrap:anywhere;">
+                        {{ row.address }}
+                      </p>
+                      <a
+                        v-if="sourceAddressExplorerHref(row.address)"
+                        :href="sourceAddressExplorerHref(row.address)"
+                        target="_blank"
+                        rel="noreferrer"
+                        class="mt-3 inline-flex items-center gap-2 text-xs font-bold text-slate-600 transition-colors hover:text-slate-900"
+                      >
+                        <BaseIcon name="ArrowTopRightOnSquareIcon" class="h-3.5 w-3.5" />
+                        <span>View in explorer</span>
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-6 flex items-end justify-between gap-4">
+                  <div>
+                    <p class="text-3xl font-bold tracking-tight text-slate-900">{{ row.balance }}</p>
+                  </div>
+                  <div class="rounded-2xl bg-slate-50 px-3 py-2 text-right">
+                    <p class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Asset</p>
+                    <p class="mt-1 text-sm font-bold text-slate-700">{{ row.asset }}</p>
+                  </div>
+                </div>
+              </div>
             </div>
+
+            <div
+              v-else
+              class="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500"
+            >
+              No settlement balances are available on this account yet.
+            </div>
+
+            <details
+              v-if="nativeBalanceRow"
+              class="rounded-3xl border border-slate-200 bg-slate-50/80"
+            >
+              <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+                <div>
+                  <p class="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Additional balance</p>
+                  <p class="mt-1 text-sm font-semibold text-slate-700">
+                    Show network balance ({{ nativeBalanceRow.asset }})
+                  </p>
+                </div>
+                <BaseIcon name="ChevronDownIcon" class="h-4 w-4 text-slate-400" />
+              </summary>
+
+              <div class="border-t border-slate-200 px-5 py-4">
+                <div class="flex items-end justify-between gap-4">
+                  <div>
+                    <p class="text-2xl font-bold text-slate-900">{{ nativeBalanceRow.balance }}</p>
+                    <p class="mt-1 text-xs text-slate-500">
+                      Native network balance kept out of the default account summary.
+                    </p>
+                  </div>
+                  <div class="rounded-2xl bg-white px-3 py-2 text-right">
+                    <p class="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Asset</p>
+                    <p class="mt-1 text-sm font-bold text-slate-700">{{ nativeBalanceRow.asset }}</p>
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
       </div>
 
-      <div
+      <a
         class="flex items-center gap-2 justify-center bg-white px-4 py-2 rounded-full border border-slate-100 shadow-sm group cursor-pointer hover:border-accent/30 transition-all"
+        :href="destinationInvoicePaymentExplorerHref ?? undefined"
+        target="_blank"
+        rel="noreferrer"
         @click="copyContractAddress"
       >
         <span class="text-[10px] font-black uppercase tracking-widest text-slate-400 mr-2">
@@ -154,7 +199,7 @@
           :class="copied ? 'text-green-500' : 'text-slate-300 group-hover:text-accent'"
           class="w-3.5 h-3.5 transition-colors"
         />
-      </div>
+      </a>
 
       <div class="flex flex-wrap items-center justify-center gap-4 pt-2">
         <button
@@ -164,14 +209,6 @@
         >
           <BaseIcon name="PlusCircleIcon" class="w-5 h-5" />
           {{ isInvoiceProcessing ? 'Interop in Progress' : 'New Payment Request' }}
-        </button>
-        <button
-          class="enterprise-button-secondary min-w-[200px] h-14 text-base font-semibold"
-          :disabled="isInvoiceProcessing"
-          @click="refreshInvoiceTable"
-        >
-          <BaseIcon name="ArrowPathIcon" class="w-5 h-5" />
-          Refresh payment requests
         </button>
       </div>
     </div>
@@ -265,7 +302,17 @@
                     {{ interopStatusBadgeLabel(tx.interop.status) }}
                   </span>
                 </div>
-                <p class="text-xs font-mono text-slate-400 mt-1">{{ tx.hash }}</p>
+                <a
+                  v-if="activityHashExplorerHref(tx)"
+                  :href="activityHashExplorerHref(tx) ?? undefined"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="mt-1 block text-xs font-mono text-slate-400 transition-colors hover:text-slate-600 hover:underline"
+                  :title="tx.hash"
+                >
+                  {{ tx.hash }}
+                </a>
+                <p v-else class="text-xs font-mono text-slate-400 mt-1">{{ tx.hash }}</p>
                 <p class="text-xs text-slate-500 mt-2 leading-relaxed" style="overflow-wrap:anywhere;">
                   {{ tx.detail }}
                 </p>
@@ -335,7 +382,17 @@
                 class="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-xs"
               >
                 <span class="font-black uppercase tracking-[0.18em] text-slate-400">Source tx</span>
-                <p class="mt-1 font-mono text-slate-600">{{ truncateHash(tx.interop.sourceTxHash) }}</p>
+                <a
+                  v-if="activitySourceTxExplorerHref(tx.interop)"
+                  :href="activitySourceTxExplorerHref(tx.interop) ?? undefined"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="mt-1 block font-mono text-slate-600 transition-colors hover:text-slate-800 hover:underline"
+                  :title="tx.interop.sourceTxHash"
+                >
+                  {{ truncateHash(tx.interop.sourceTxHash) }}
+                </a>
+                <p v-else class="mt-1 font-mono text-slate-600">{{ truncateHash(tx.interop.sourceTxHash) }}</p>
               </div>
               <div
                 v-if="tx.interop.bundleHash"
@@ -368,7 +425,7 @@
 
 <script setup lang="ts">
 import { formatEther, formatUnits } from 'viem';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import BaseIcon from '../components/BaseIcon.vue';
 import CreateInvoiceModal from '../components/CreateInvoiceModal.vue';
@@ -379,6 +436,11 @@ import { type InteropMode, useInteropMode } from '../composables/useInteropMode'
 import { useInteropInvoice } from '../composables/useInteropInvoice';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
+import {
+  ACTIVE_CHAIN_BALANCES_REFRESH_EVENT,
+  INVOICES_REFRESH_EVENT
+} from '../composables/useDashboardRefresh';
+import { useTestTokenFunding } from '../composables/useTestTokenFunding';
 import type {
   BackendServiceResponse,
   InvoicePaymentOption,
@@ -388,6 +450,12 @@ import type {
   InvoiceSourceTag
 } from '../types/invoices';
 import { getBackendUrl } from '../utils/backend';
+import {
+  buildExplorerAddressUrl,
+  buildExplorerTxUrl,
+  type ExplorerChainKey,
+  isExplorerTxHash
+} from '../utils/explorer';
 import type { CreateInvoiceSubmitPayload } from '../utils/invoiceForm';
 
 type BannerTone = 'info' | 'success' | 'error';
@@ -413,6 +481,7 @@ type InteropStepState = 'upcoming' | 'current' | 'complete' | 'failed';
 type ActivityInteropEntry = {
   mode: InteropMode;
   flow: InteropFlow;
+  sourceChainKey: ExplorerChainKey;
   status: InteropStatus;
   currentStepId: InteropStepId | null;
   stepDetails: Partial<Record<InteropStepId, string>>;
@@ -429,6 +498,7 @@ type ActivityEntry = {
   function: string;
   status: ActivityStatus;
   hash: string;
+  hashChainKey?: ExplorerChainKey;
   detail: string;
   timestamp: string;
   interop?: ActivityInteropEntry;
@@ -446,7 +516,6 @@ type InvoiceDraftSummary = {
   invoiceId?: string;
 };
 
-type TokenFundingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 type InvoiceTableCardExposed = {
   refreshInvoices: () => Promise<void>;
 };
@@ -539,11 +608,9 @@ const INVOICE_POLL_INTERVAL_MS = 10000;
 const INVOICE_POLL_TIMEOUT_MS = 90000;
 const SHADOW_ACCOUNT_POLL_INTERVAL_MS = 3000;
 const SHADOW_ACCOUNT_POLL_TIMEOUT_MS = 90000;
-const FUND_TOKENS_POLL_INTERVAL_MS = 15000;
-const FUND_TOKENS_TIMEOUT_MS = 300000;
 const MAX_ERROR_MESSAGE_LENGTH = 220;
 const router = useRouter();
-const { isAuthenticated, getChain, selectedChainKey } = usePrividium();
+const { isAuthenticated, getChain, userName } = usePrividium();
 const { mode: interopMode } = useInteropMode();
 const { account: ssoAccount } = useSsoAccount();
 const {
@@ -560,13 +627,13 @@ const {
 const {
   rows: balanceRows,
   isLoading: isBalancesLoading,
-  isManualRefreshing: isBalancesManualRefreshing,
   isPolling: isBalancesPolling,
   lastUpdatedAt: balancesLastUpdatedAt,
   refreshIntervalMs: balancesRefreshIntervalMs,
   error: balancesError,
   refresh: refreshBalances
 } = useActiveChainBalances();
+const { tokenFundingNotice, tokenFundingNoticeClass } = useTestTokenFunding();
 const timestampFormatter = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',
   minute: '2-digit',
@@ -574,6 +641,7 @@ const timestampFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const copied = ref(false);
+const openBalanceMenuKey = ref<string | null>(null);
 const isCreateInvoiceModalOpen = ref(false);
 const isPayInvoiceModalOpen = ref(false);
 const createInvoiceBanner = ref('');
@@ -592,6 +660,7 @@ const interopError = ref('');
 const interopSourceTxHash = ref('');
 const interopBundleHash = ref('');
 const interopInvoiceId = ref('');
+const interopSourceChainKey = ref<ExplorerChainKey>('A');
 const processingInvoiceId = ref('');
 const payInvoiceTarget = ref<InvoiceRecord | null>(null);
 const payInvoiceMode = ref<InteropMode>('public');
@@ -602,9 +671,6 @@ const payInvoiceQuoteType = ref<'exact'>('exact');
 const payInvoiceBillingTokenSymbol = ref('');
 const payInvoiceBillingLiquidityAmount = ref('0');
 const payInvoiceHasSufficientBillingLiquidity = ref(true);
-const isTokenFunding = ref(false);
-const tokenFundingNotice = ref('');
-const tokenFundingNoticeTone = ref<'info' | 'success' | 'error'>('info');
 
 const activeChainId = computed(() => Number(getChain().id));
 const sourceChainLabel = computed(() => `Chain ${sourceConfig.value.chainKey}`);
@@ -613,7 +679,16 @@ const currentInteropCenterAddress = computed(() => sourceConfig.value.interopCen
 const destinationInvoicePaymentAddress = computed(
   () => destinationConfig.value.invoicePayment ?? null
 );
+const destinationInvoicePaymentExplorerHref = computed(() =>
+  destinationInvoicePaymentAddress.value
+    ? buildExplorerAddressUrl('C', destinationInvoicePaymentAddress.value)
+    : undefined
+);
 const hasBalanceRows = computed(() => balanceRows.value.length > 0);
+const visibleBalanceRows = computed(() => balanceRows.value.filter((row) => row.type !== 'native'));
+const nativeBalanceRow = computed(
+  () => balanceRows.value.find((row) => row.type === 'native') ?? null
+);
 const balancesAutoRefreshSeconds = Math.floor(balancesRefreshIntervalMs / 1000);
 const balancesLastUpdatedLabel = computed(() =>
   balancesLastUpdatedAt.value
@@ -628,15 +703,6 @@ const canOpenInvoiceModal = computed(() =>
 const isInvoiceProcessing = computed(() =>
   transactions.value.some((entry) => entry.status === 'pending' && Boolean(entry.interop))
 );
-const tokenFundingNoticeClass = computed(() => {
-  if (tokenFundingNoticeTone.value === 'success') {
-    return 'border-emerald-100 bg-emerald-50 text-emerald-800';
-  }
-  if (tokenFundingNoticeTone.value === 'error') {
-    return 'border-red-100 bg-red-50 text-red-800';
-  }
-  return 'border-sky-100 bg-sky-50 text-sky-800';
-});
 const payInvoiceDisableReason = computed(() => {
   if (!payInvoiceTarget.value) {
     return 'Select an invoice to continue.';
@@ -808,6 +874,19 @@ const copyContractAddress = () => {
   }, 2000);
 };
 
+const sourceAddressExplorerHref = (address: string) =>
+  buildExplorerAddressUrl(sourceConfig.value.chainKey, address);
+
+const toggleBalanceMenu = (asset: string) => {
+  openBalanceMenuKey.value = openBalanceMenuKey.value === asset ? null : asset;
+};
+
+const activityHashExplorerHref = (tx: ActivityEntry) =>
+  tx.hashChainKey && isExplorerTxHash(tx.hash) ? buildExplorerTxUrl(tx.hashChainKey, tx.hash) : undefined;
+
+const activitySourceTxExplorerHref = (interop: ActivityInteropEntry) =>
+  buildExplorerTxUrl(interop.sourceChainKey, interop.sourceTxHash);
+
 const interopStepsForFlow = (flow: InteropFlow, mode: InteropMode) => {
   if (flow === 'pay') {
     return mode === 'private' ? PRIVATE_PAY_INTEROP_STEPS : PUBLIC_PAY_INTEROP_STEPS;
@@ -872,6 +951,7 @@ const syncTransactionInterop = (
   tx.interop = {
     mode,
     flow,
+    sourceChainKey: interopSourceChainKey.value,
     status: interopStatus.value,
     currentStepId: interopCurrentStepId.value,
     stepDetails: { ...interopStepDetails.value },
@@ -1009,155 +1089,20 @@ const refreshInvoiceTable = () => {
   void invoiceTableCardRef.value?.refreshInvoices();
 };
 
-const listFailedTokens = (value: unknown): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .filter((entry) => isRecord(entry) && entry.minted === false)
-    .map(
-      (entry) => toStringValue((entry as Record<string, unknown>).token)?.toUpperCase() || 'TOKEN'
-    );
-};
-
-const fundTestTokens = async () => {
-  if (!ssoAccount.value || isTokenFunding.value) {
-    return;
-  }
-
-  isTokenFunding.value = true;
-  tokenFundingNoticeTone.value = 'info';
-  tokenFundingNotice.value = `Requesting test funds on ${sourceChainLabel.value}.`;
-
-  try {
-    const response = await fetch(getBackendUrl('/fund-tokens'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json'
-      },
-      body: JSON.stringify({ chainKey: selectedChainKey.value, accountAddress: ssoAccount.value })
-    });
-
-    const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      const serverMessage =
-        isServiceResponse(payload) && typeof payload.message === 'string'
-          ? payload.message
-          : `Token funding request failed with status ${response.status}`;
-      throw new Error(serverMessage);
-    }
-
-    if (!isServiceResponse<Record<string, unknown>>(payload)) {
-      throw new Error('Unexpected token funding response format.');
-    }
-
-    if (!payload.success) {
-      throw new Error(payload.message || 'Token funding failed.');
-    }
-
-    const initialResponseObject = isRecord(payload.responseObject)
-      ? (payload.responseObject as Record<string, unknown>)
-      : {};
-    const immediateFailedTokens = listFailedTokens(initialResponseObject.tokenMintResults);
-
-    const immediateStatus = toStringValue(initialResponseObject.status);
-    const jobId = toStringValue(initialResponseObject.jobId);
-
-    if (immediateFailedTokens.length > 0) {
-      tokenFundingNoticeTone.value = 'error';
-      tokenFundingNotice.value = `Token funding finished with errors for ${immediateFailedTokens.join(', ')}. Check backend logs for details.`;
-      await refreshBalances();
-      return;
-    }
-
-    if (!jobId || (immediateStatus !== 'queued' && immediateStatus !== 'running')) {
-      tokenFundingNoticeTone.value = 'success';
-      tokenFundingNotice.value = 'Test funds completed.';
-      await refreshBalances();
-      return;
-    }
-
-    tokenFundingNoticeTone.value = 'info';
-    tokenFundingNotice.value = `Token funding queued (job ${jobId.slice(0, 8)}). Processing...`;
-
-    const deadline = Date.now() + FUND_TOKENS_TIMEOUT_MS;
-    let lastSeenStatus: TokenFundingJobStatus = immediateStatus as TokenFundingJobStatus;
-
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, FUND_TOKENS_POLL_INTERVAL_MS));
-
-      const statusResponse = await fetch(getBackendUrl(`/fund-tokens/${jobId}`), {
-        headers: {
-          Accept: 'application/json'
-        }
-      });
-      const statusPayload: unknown = await statusResponse.json().catch(() => null);
-      if (!statusResponse.ok) {
-        const serverMessage =
-          isServiceResponse(statusPayload) && typeof statusPayload.message === 'string'
-            ? statusPayload.message
-            : `Token funding status failed with status ${statusResponse.status}`;
-        throw new Error(serverMessage);
-      }
-
-      if (!isServiceResponse<Record<string, unknown>>(statusPayload)) {
-        throw new Error('Unexpected token funding status format.');
-      }
-
-      const statusObject = isRecord(statusPayload.responseObject)
-        ? (statusPayload.responseObject as Record<string, unknown>)
-        : {};
-      const status = toStringValue(statusObject.status) as TokenFundingJobStatus | null;
-      if (!status) {
-        continue;
-      }
-
-      lastSeenStatus = status;
-
-      if (status === 'queued' || status === 'running') {
-        tokenFundingNoticeTone.value = 'info';
-        tokenFundingNotice.value = `Token funding ${status} (job ${jobId.slice(0, 8)}).`;
-        continue;
-      }
-
-      const failedTokens = listFailedTokens(statusObject.tokenMintResults);
-      if (status === 'failed') {
-        const detail = toStringValue(statusObject.error);
-        tokenFundingNoticeTone.value = 'error';
-        tokenFundingNotice.value = failedTokens.length
-          ? `Token funding finished with errors for ${failedTokens.join(', ')}. Check backend logs for details.`
-          : detail || 'Token funding failed. Check backend logs for details.';
-      } else if (failedTokens.length > 0) {
-        tokenFundingNoticeTone.value = 'error';
-        tokenFundingNotice.value = `Token funding finished with errors for ${failedTokens.join(', ')}. Check backend logs for details.`;
-      } else {
-        tokenFundingNoticeTone.value = 'success';
-        tokenFundingNotice.value = 'Test token funding completed.';
-      }
-
-      await refreshBalances();
-      return;
-    }
-
-    tokenFundingNoticeTone.value = 'error';
-    tokenFundingNotice.value = `Token funding is still ${lastSeenStatus} after ${Math.floor(FUND_TOKENS_TIMEOUT_MS / 1000)}s. Check backend logs and retry refresh later.`;
-  } catch (error) {
-    tokenFundingNoticeTone.value = 'error';
-    tokenFundingNotice.value = formatTransactionError(error, 'Failed to fund test tokens.');
-  } finally {
-    isTokenFunding.value = false;
-  }
-};
-
-const addTransaction = (func: string, status: ActivityStatus, hash: string, detail: string) => {
+const addTransaction = (
+  func: string,
+  status: ActivityStatus,
+  hash: string,
+  detail: string,
+  hashChainKey: ExplorerChainKey = sourceConfig.value.chainKey
+) => {
   const id = Date.now().toString();
   transactions.value.unshift({
     id,
     function: func,
     status,
     hash: hash || 'Processing...',
+    hashChainKey,
     detail,
     timestamp: new Date().toLocaleTimeString()
   });
@@ -1166,13 +1111,14 @@ const addTransaction = (func: string, status: ActivityStatus, hash: string, deta
 
 const updateTransaction = (
   id: string,
-  updates: Partial<Pick<ActivityEntry, 'status' | 'hash' | 'detail'>>
+  updates: Partial<Pick<ActivityEntry, 'status' | 'hash' | 'hashChainKey' | 'detail'>>
 ) => {
   const tx = transactions.value.find((entry) => entry.id === id);
   if (!tx) return;
 
   if (updates.status) tx.status = updates.status;
   if (updates.hash) tx.hash = updates.hash;
+  if (updates.hashChainKey) tx.hashChainKey = updates.hashChainKey;
   if (updates.detail) tx.detail = updates.detail;
 };
 
@@ -1375,6 +1321,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
   createInvoiceBannerTone.value = 'info';
   createInvoiceBanner.value = 'Validating payment request before cross-border submission.';
   interopFlow.value = 'create';
+  interopSourceChainKey.value = sourceConfig.value.chainKey;
   interopActivityMode.value = transactionMode;
   interopStepDetails.value = {};
   setInteropProgress(
@@ -1595,6 +1542,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
   interopError.value = '';
   processingInvoiceId.value = invoice.id;
   interopFlow.value = 'pay';
+  interopSourceChainKey.value = sourceConfig.value.chainKey;
   interopActivityMode.value = transactionMode;
   interopStepDetails.value = {};
   setInteropProgress(
@@ -1861,7 +1809,26 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
   }
 };
 
+const handleBalanceRefreshRequest = () => {
+  void refreshBalances();
+};
+
+const handleInvoicesRefreshRequest = () => {
+  refreshInvoiceTable();
+};
+
+const closeBalanceMenu = (event: MouseEvent) => {
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest('[data-balance-menu]')) {
+    openBalanceMenuKey.value = null;
+  }
+};
+
 onMounted(() => {
+  window.addEventListener('click', closeBalanceMenu);
+  window.addEventListener(ACTIVE_CHAIN_BALANCES_REFRESH_EVENT, handleBalanceRefreshRequest);
+  window.addEventListener(INVOICES_REFRESH_EVENT, handleInvoicesRefreshRequest);
+
   if (!isAuthenticated.value) {
     void router.push('/login');
     return;
@@ -1870,5 +1837,11 @@ onMounted(() => {
   if (!currentInteropCenterAddress.value || !destinationInvoicePaymentAddress.value) {
     errorMessage.value = 'Missing interop contract configuration for the active payment route.';
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeBalanceMenu);
+  window.removeEventListener(ACTIVE_CHAIN_BALANCES_REFRESH_EVENT, handleBalanceRefreshRequest);
+  window.removeEventListener(INVOICES_REFRESH_EVENT, handleInvoicesRefreshRequest);
 });
 </script>

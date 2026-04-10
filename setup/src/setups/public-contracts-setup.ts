@@ -76,6 +76,16 @@ function normalizeAbiJson(abi: Abi | string) {
   }
 }
 
+function fallbackRegisteredContract(contract: PublicContractSpec): Contract {
+  return {
+    id: contract.address,
+    contractAddress: contract.address,
+    name: contract.name,
+    description: contract.description,
+    abi: JSON.stringify(contract.abi)
+  };
+}
+
 async function recreateContract(
   adminApiClient: Client,
   existingContract: Contract,
@@ -182,14 +192,23 @@ async function contractPermissionsNeedRefresh(
     }
 
     const methodSelector = toFunctionSelector(abiItem);
-    const existingPermission = extractRes(
-      await getContractPermissions(adminApiClient, {
-        contractAddress: contract.contractAddress,
-        methodSelector,
-        limit: 20,
-        offset: 0
-      })
-    );
+    let existingPermission: Awaited<ReturnType<typeof getContractPermissions>> extends infer T
+      ? T extends { data?: infer D }
+        ? D
+        : never
+      : never;
+    try {
+      existingPermission = extractRes(
+        await getContractPermissions(adminApiClient, {
+          contractAddress: contract.contractAddress,
+          methodSelector,
+          limit: 20,
+          offset: 0
+        })
+      );
+    } catch {
+      return true;
+    }
 
     if (existingPermission.items.length === 0) {
       continue;
@@ -206,14 +225,38 @@ async function contractPermissionsNeedRefresh(
 
 async function registerPublicContract(adminApiClient: Client, contract: PublicContractSpec) {
   const contractBody = buildContractBody(contract);
-  const existingRes = await getContractByAddress(adminApiClient, contract.address);
-  let registeredContract =
-    existingRes.response.status === 404
-      ? extractRes(await postContracts(adminApiClient, contractBody))
-      : await syncRegisteredContract(adminApiClient, extractRes(existingRes), contract);
+  let registeredContract = fallbackRegisteredContract(contract);
+
+  try {
+    const existingRes = await getContractByAddress(adminApiClient, contract.address);
+    registeredContract =
+      existingRes.response.status === 404
+        ? extractRes(await postContracts(adminApiClient, contractBody))
+        : await syncRegisteredContract(adminApiClient, extractRes(existingRes), contract);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      registeredContract = extractRes(await postContracts(adminApiClient, contractBody));
+      console.warn(
+        `Warning: contract lookup/update failed for ${contract.address}; recovered by creating the registration directly. ${message}`
+      );
+    } catch (postError) {
+      const postMessage = postError instanceof Error ? postError.message : String(postError);
+      console.warn(
+        `Warning: could not fully sync public contract registration for ${contract.address}; continuing with address-based permission sync. lookup/update=${message}; create=${postMessage}`
+      );
+    }
+  }
 
   if (await contractPermissionsNeedRefresh(adminApiClient, registeredContract, contract.abi)) {
-    registeredContract = await recreateContract(adminApiClient, registeredContract, contract);
+    try {
+      registeredContract = await recreateContract(adminApiClient, registeredContract, contract);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Warning: could not recreate contract registration for ${contract.address}; continuing with existing registration. ${message}`
+      );
+    }
   }
 
   for (const abiItem of contract.abi) {
@@ -223,14 +266,23 @@ async function registerPublicContract(adminApiClient: Client, contract: PublicCo
 
     const methodSelector = toFunctionSelector(abiItem);
     const desiredPermission = desiredPermissionForAbiItem(abiItem);
-    const existingPermission = extractRes(
-      await getContractPermissions(adminApiClient, {
-        contractAddress: registeredContract.contractAddress,
-        methodSelector,
-        limit: 20,
-        offset: 0
-      })
-    );
+    let existingPermission;
+    try {
+      existingPermission = extractRes(
+        await getContractPermissions(adminApiClient, {
+          contractAddress: registeredContract.contractAddress,
+          methodSelector,
+          limit: 20,
+          offset: 0
+        })
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Warning: could not inspect existing permissions for ${registeredContract.contractAddress} ${methodSelector}; attempting to post desired permission anyway. ${message}`
+      );
+      existingPermission = { items: [] };
+    }
 
     if (
       existingPermission.items.some((item) => permissionMatchesDesired(item, desiredPermission))
@@ -238,17 +290,24 @@ async function registerPublicContract(adminApiClient: Client, contract: PublicCo
       continue;
     }
 
-    extractRes(
-      await postContractPermissions(adminApiClient, {
-        contractAddress: registeredContract.contractAddress,
-        accessType: desiredPermission.accessType,
-        argumentRestrictions: desiredPermission.argumentRestrictions,
-        roles: [],
-        functionSignature: formatAbiItem(abiItem),
-        methodSelector,
-        ruleType: desiredPermission.ruleType
-      })
-    );
+    try {
+      extractRes(
+        await postContractPermissions(adminApiClient, {
+          contractAddress: registeredContract.contractAddress,
+          accessType: desiredPermission.accessType,
+          argumentRestrictions: desiredPermission.argumentRestrictions,
+          roles: [],
+          functionSignature: formatAbiItem(abiItem),
+          methodSelector,
+          ruleType: desiredPermission.ruleType
+        })
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Warning: could not post permission for ${registeredContract.contractAddress} ${methodSelector}. ${message}`
+      );
+    }
   }
 }
 

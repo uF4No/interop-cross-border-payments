@@ -6,6 +6,7 @@ import { assertDotEnv, extractConfig, extractConfigOptional } from './tools/conf
 import { readContractsConfig, resolveContractsConfigPath } from './tools/contracts-config';
 import { createAdminSession } from './tools/create-admin-client';
 import { ensureEntrypointsFunded, formatFundingSummary } from './tools/entrypoint-funding';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 
 type ChainConfig = {
@@ -20,6 +21,8 @@ type ChainConfig = {
 
 const DEFAULT_ENTRYPOINT_MIN_BALANCE_WEI = 10_000_000_000_000_000n; // 0.01 ETH
 const DEFAULT_ENTRYPOINT_TARGET_BALANCE_WEI = 50_000_000_000_000_000n; // 0.05 ETH
+
+initRuntimeLogging('setup-fund-entrypoints');
 
 function toAddress(name: string, value: string): Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) {

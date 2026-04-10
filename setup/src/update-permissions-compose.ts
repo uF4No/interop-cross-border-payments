@@ -4,6 +4,7 @@ import { intro, outro } from '@clack/prompts';
 import { assertDotEnv, extractConfigOptional } from './tools/config-tools';
 import { readContractsConfig, resolveContractsConfigPath } from './tools/contracts-config';
 import { updatePermissionApisCompose } from './tools/permissions-api-compose';
+import { initRuntimeLogging } from './tools/runtime-logging';
 
 function requiredValue(name: string, value: string | undefined): string {
   if (!value) {
@@ -11,6 +12,8 @@ function requiredValue(name: string, value: string | undefined): string {
   }
   return value;
 }
+
+initRuntimeLogging('setup-update-permissions-compose');
 
 async function main() {
   intro('Updating permissions-api compose config (bundler + dispatcher)...');

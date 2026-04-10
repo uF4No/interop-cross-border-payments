@@ -24,11 +24,14 @@ import {
 import { assertDotEnv, extractConfig, extractConfigOptional } from './tools/config-tools';
 import { readContractsConfig, resolveContractsConfigPath } from './tools/contracts-config';
 import { createAdminSession } from './tools/create-admin-client';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { assertPrividiumApiUp } from './tools/service-assert';
 
 const CounterArtifactSchema = z.object({
   abi: z.unknown()
 });
+
+initRuntimeLogging('setup-verify-sso');
 
 function createTransport(rpcUrl: string, authToken?: string): Transport {
   if (!authToken) {

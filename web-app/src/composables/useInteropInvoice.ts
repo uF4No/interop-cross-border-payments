@@ -190,6 +190,7 @@ type PayInvoiceContext = {
   destinationInteropHandler: Address;
   shadowAccount: Address;
   destinationBalance: bigint;
+  sourceReadClient: PublicClient;
 };
 
 const env = import.meta.env as Record<string, string | undefined>;
@@ -204,6 +205,7 @@ const PRIVATE_BUNDLE_STATUS_FULLY_EXECUTED = 2;
 const PRIVATE_BUNDLE_STATUS_UNBUNDLED = 3;
 const PRIVATE_BUNDLE_POLL_INTERVAL_MS = 3_000;
 const PRIVATE_BUNDLE_POLL_TIMEOUT_MS = 120_000;
+const LOCAL_BACKEND_HOSTS = new Set(['localhost', '127.0.0.1']);
 
 const interopCenterAbi = parseAbi([
   'function sendBundle(bytes _destinationChainId, (bytes to, bytes data, bytes[] callAttributes)[] _callStarters, bytes[] _bundleAttributes) payable returns (bytes32)',
@@ -268,6 +270,20 @@ function readChainId(...keys: string[]): number | undefined {
     }
   }
   return undefined;
+}
+
+function shouldSkipWalletAuthorizationForLocalDirectHandleOps() {
+  const baseUrl = env.VITE_BACKEND_URL?.trim();
+  if (!baseUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(baseUrl);
+    return LOCAL_BACKEND_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function readHex(...keys: string[]): Hex | undefined {
@@ -598,7 +614,8 @@ function normalizeAddressKey(address: Address): string {
 function readPrivateSourceAssetId(
   readClient: PublicClient,
   source: SourceInteropConfig,
-  sourceToken: Address
+  sourceToken: Address,
+  account: Address
 ) {
   if (!source.nativeTokenVault) {
     throw new Error(
@@ -610,7 +627,8 @@ function readPrivateSourceAssetId(
     address: source.nativeTokenVault,
     abi: privateNtvAbi,
     functionName: 'assetId',
-    args: [sourceToken]
+    args: [sourceToken],
+    account
   }) as Promise<Hex>;
 }
 
@@ -799,7 +817,7 @@ async function sendTxWithPasskeyForChain(
     chainKey: resolveSourceChainKey(sourceConfig.chainId)
   });
 
-  if (enableWalletToken && txData.length > 0) {
+  if (enableWalletToken && txData.length > 0 && !shouldSkipWalletAuthorizationForLocalDirectHandleOps()) {
     const primaryCall = txData[0];
     const nonceNumber = Number(nonce);
     if (!Number.isSafeInteger(nonceNumber)) {
@@ -1074,10 +1092,20 @@ async function readPrivateBundleHashFromReceipt(
 async function resolveSubmissionBundleHash(
   mode: InteropMode,
   readClient: PublicClient,
-  submission: UserOpSubmissionResult
+  submission: UserOpSubmissionResult,
+  sourceChainId?: number,
+  sourceRpcUrl?: string
 ) {
+  if (submission.bundleHash) {
+    return submission.bundleHash as `0x${string}`;
+  }
+
   if (mode === 'private') {
-    return await readPrivateBundleHashFromReceipt(readClient, submission.txHash);
+    const receiptClient =
+      sourceChainId && sourceRpcUrl
+        ? createReadOnlyClient(sourceChainId, sourceRpcUrl)
+        : readClient;
+    return await readPrivateBundleHashFromReceipt(receiptClient, submission.txHash);
   }
 
   return submission.bundleHash as `0x${string}` | undefined;
@@ -1135,7 +1163,12 @@ async function resolvePayInvoiceContext(
     );
     symbol = resolvedPaymentToken.symbol;
     sourceToken = resolvedPaymentToken.sourceToken;
-    sourceAssetId = await readPrivateSourceAssetId(rpcClient, resolvedSourceConfig, sourceToken);
+    sourceAssetId = await readPrivateSourceAssetId(
+      rpcClient,
+      resolvedSourceConfig,
+      sourceToken,
+      session.savedAccount
+    );
   } else {
     const resolvedPaymentToken = resolveConfiguredPublicPaymentToken(
       paymentToken,
@@ -1169,6 +1202,11 @@ async function resolvePayInvoiceContext(
     throw new Error('Missing chain C destination chain ID.');
   }
 
+  const sourceReadClient =
+    resolvedSourceConfig.mode === 'private' && session.sourceRpcUrl
+      ? createReadOnlyClient(session.sourceChainId, session.sourceRpcUrl)
+      : rpcClient;
+
   const destinationClient = createReadOnlyClient(destinationChainId, destinationRpcUrl);
   const shadowAccount = getAddress(
     (await destinationClient.readContract({
@@ -1198,7 +1236,8 @@ async function resolvePayInvoiceContext(
     destinationRpcUrl,
     destinationInteropHandler,
     shadowAccount,
-    destinationBalance
+    destinationBalance,
+    sourceReadClient
   };
 }
 
@@ -1383,7 +1422,13 @@ export function useInteropInvoice() {
         );
       }
     })();
-    const bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
+    const bundleHash = await resolveSubmissionBundleHash(
+      activeMode,
+      currentRpcClient,
+      submission,
+      session.sourceChainId,
+      session.sourceRpcUrl
+    );
 
     return {
       transactionHash: submission.txHash,
@@ -1417,7 +1462,8 @@ export function useInteropInvoice() {
       sourceAssetId,
       symbol,
       shadowAccount,
-      destinationBalance
+      destinationBalance,
+      sourceReadClient
     } = await resolvePayInvoiceContext(
       payload,
       currentRpcClient,
@@ -1433,7 +1479,7 @@ export function useInteropInvoice() {
       );
     }
 
-    const sourceBalance = (await currentRpcClient.readContract({
+    const sourceBalance = (await sourceReadClient.readContract({
       address: sourceToken,
       abi: erc20Abi,
       functionName: 'balanceOf',
@@ -1450,7 +1496,7 @@ export function useInteropInvoice() {
     const requiredFundingAmount =
       destinationBalance >= paymentAmount ? 0n : paymentAmount - destinationBalance;
 
-    const allowance = (await currentRpcClient.readContract({
+    const allowance = (await sourceReadClient.readContract({
       address: sourceToken,
       abi: erc20Abi,
       functionName: 'allowance',
@@ -1548,7 +1594,13 @@ export function useInteropInvoice() {
         }
       })();
       transactionHash = submission.txHash;
-      bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
+      bundleHash = await resolveSubmissionBundleHash(
+        activeMode,
+        currentRpcClient,
+        submission,
+        session.sourceChainId,
+        session.sourceRpcUrl
+      );
     }
 
     return {
@@ -1645,7 +1697,13 @@ export function useInteropInvoice() {
         );
       }
     })();
-    const bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
+    const bundleHash = await resolveSubmissionBundleHash(
+      activeMode,
+      currentRpcClient,
+      submission,
+      session.sourceChainId,
+      session.sourceRpcUrl
+    );
 
     return {
       transactionHash: submission.txHash,

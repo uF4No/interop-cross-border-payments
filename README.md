@@ -87,6 +87,8 @@ The script outputs deployment progress in the terminal. Contract addresses are w
 
 The script also synchronizes contract addresses to the `.env` files in the `web-app/` and `backend/` directories.
 
+Setup logs are also written to rotated files under `setup/.runtime/` so you can inspect previous runs without relying only on terminal scrollback.
+
 At the end of the setup, the script prints the command required to restart the affected containers.
 
 ### 6. Restart API Docker containers
@@ -106,6 +108,8 @@ To start the backend service run:
 ```sh
 pnpm dev:backend
 ```
+
+The backend continues to log to the terminal and also writes rotated runtime logs to `backend/.runtime/`.
 
 > [!IMPORTANT]
 > Start the backend and web-app services in separate terminals.
@@ -145,6 +149,20 @@ If you need to refresh env files from the canonical config, run:
 ```bash
 pnpm -C setup refresh:env
 ```
+
+## Runtime Logs
+
+The setup and backend packages keep persistent runtime logs in package-local `.runtime/` directories:
+
+- `setup/.runtime/`
+- `backend/.runtime/`
+
+These directories are gitignored. Log files rotate automatically so a single long-running process does not keep growing one file indefinitely.
+
+See the package READMEs for the exact file names and command-level details:
+
+- [`setup/README.md`](./setup/README.md)
+- [`backend/README.md`](./backend/README.md)
 
 ## Branding and style customization
 

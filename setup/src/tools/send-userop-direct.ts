@@ -13,6 +13,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import EntryPointArtifact from '../system/contracts/EntryPoint.json';
+import { initRuntimeLogging } from './runtime-logging';
 
 type RpcEnvelope = {
   method: string;
@@ -56,6 +57,8 @@ type CliOptions = {
   beneficiary?: Address;
   broadcast: boolean;
 };
+
+initRuntimeLogging('setup-userop-direct');
 
 function usage(): never {
   console.error(`Usage:

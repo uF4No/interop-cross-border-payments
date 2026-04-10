@@ -5,6 +5,7 @@ import { computed } from 'vue';
 import { useInvoices } from '../composables/useInvoices';
 import type { InvoiceTableRelationshipFilter, InvoiceTableStatusFilter } from '../types/invoices';
 import type { InvoiceRecord } from '../types/invoices';
+import { buildExplorerAddressUrl, buildExplorerTokenUrl } from '../utils/explorer';
 import BaseIcon from './BaseIcon.vue';
 
 const props = defineProps<{
@@ -23,7 +24,6 @@ const {
   hasInvoices,
   isEmpty,
   isLoading,
-  isManualRefreshing,
   isPolling,
   invoices,
   lastUpdatedAt,
@@ -226,6 +226,9 @@ const configuredChainLabels = new Map<number, string>(
 const formatChainLabel = (chainId: number) =>
   configuredChainLabels.get(chainId) ?? `Chain ${chainId}`;
 
+const invoicePartyExplorerHref = (address: string) => buildExplorerAddressUrl('C', address);
+const billingTokenExplorerHref = (address: string) => buildExplorerTokenUrl('C', address);
+
 const normalizeInvoiceStatus = (invoice: InvoiceRecord) => invoice.status.trim().toLowerCase();
 
 const canPayInvoice = (invoice: InvoiceRecord) =>
@@ -357,18 +360,6 @@ defineExpose({
         </div>
       </div>
 
-      <button
-        @click="loadInvoices"
-        :disabled="isLoading || isManualRefreshing"
-        class="enterprise-button-secondary w-full md:w-auto"
-      >
-        <BaseIcon
-          name="ArrowPathIcon"
-          :class="{ 'animate-spin': isManualRefreshing }"
-          class="w-4 h-4"
-        />
-        {{ isManualRefreshing ? 'Refreshing payment requests' : 'Refresh payment requests' }}
-      </button>
     </div>
 
     <div v-if="showInitialLoadingState" class="px-8 py-12 space-y-4">
@@ -451,12 +442,40 @@ defineExpose({
               </div>
             </td>
             <td class="px-4 py-4">
-              <span class="font-mono text-xs text-slate-600 whitespace-nowrap" :title="invoice.creator">
+              <a
+                v-if="invoicePartyExplorerHref(invoice.creator)"
+                :href="invoicePartyExplorerHref(invoice.creator)"
+                target="_blank"
+                rel="noreferrer"
+                class="font-mono text-xs text-slate-600 whitespace-nowrap transition-colors hover:text-slate-800 hover:underline"
+                :title="invoice.creator"
+              >
+                {{ formatCompactAddress(invoice.creator) }}
+              </a>
+              <span
+                v-else
+                class="font-mono text-xs text-slate-600 whitespace-nowrap"
+                :title="invoice.creator"
+              >
                 {{ formatCompactAddress(invoice.creator) }}
               </span>
             </td>
             <td class="px-4 py-4">
-              <span class="font-mono text-xs text-slate-600 whitespace-nowrap" :title="invoice.recipient">
+              <a
+                v-if="invoicePartyExplorerHref(invoice.recipient)"
+                :href="invoicePartyExplorerHref(invoice.recipient)"
+                target="_blank"
+                rel="noreferrer"
+                class="font-mono text-xs text-slate-600 whitespace-nowrap transition-colors hover:text-slate-800 hover:underline"
+                :title="invoice.recipient"
+              >
+                {{ formatCompactAddress(invoice.recipient) }}
+              </a>
+              <span
+                v-else
+                class="font-mono text-xs text-slate-600 whitespace-nowrap"
+                :title="invoice.recipient"
+              >
                 {{ formatCompactAddress(invoice.recipient) }}
               </span>
             </td>
@@ -465,7 +484,16 @@ defineExpose({
                 <span class="text-xs font-semibold uppercase tracking-[0.12em] text-slate-800">
                   {{ getBillingTokenSymbol(invoice.billingToken) }}
                 </span>
-                <span class="font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                <a
+                  v-if="billingTokenExplorerHref(invoice.billingToken)"
+                  :href="billingTokenExplorerHref(invoice.billingToken)"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="font-mono text-[11px] text-slate-500 whitespace-nowrap transition-colors hover:text-slate-700 hover:underline"
+                >
+                  {{ formatCompactAddress(invoice.billingToken) }}
+                </a>
+                <span v-else class="font-mono text-[11px] text-slate-500 whitespace-nowrap">
                   {{ formatCompactAddress(invoice.billingToken) }}
                 </span>
                 <span

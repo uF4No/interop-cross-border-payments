@@ -4,13 +4,19 @@ import { useRoute, useRouter } from 'vue-router';
 import { useInteropMode } from '../composables/useInteropMode';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
+import {
+  requestBalancesRefresh,
+  requestInvoicesRefresh
+} from '../composables/useDashboardRefresh';
+import { useTestTokenFunding } from '../composables/useTestTokenFunding';
 import BaseIcon from './BaseIcon.vue';
 
 const router = useRouter();
 const route = useRoute();
 const { account: ssoAccount } = useSsoAccount();
-const { signOut, branding } = usePrividium();
+const { signOut, branding, userName } = usePrividium();
 const { mode: interopMode, isPrivateAvailable, setMode } = useInteropMode();
+const { fundTestTokens, isTokenFunding } = useTestTokenFunding();
 
 const dropdownOpen = ref(false);
 const copied = ref(false);
@@ -18,6 +24,7 @@ const sessionDropdownRef = ref<HTMLElement | null>(null);
 let copiedResetTimer: ReturnType<typeof setTimeout> | null = null;
 const canShowSessionControls = computed(() => route.path !== '/login');
 const canShowInteropToggle = computed(() => canShowSessionControls.value && isPrivateAvailable.value);
+const sessionLabel = computed(() => userName.value?.trim() || 'User');
 
 const copyAddress = () => {
   if (ssoAccount.value) {
@@ -32,6 +39,21 @@ const copyAddress = () => {
       copiedResetTimer = null;
     }, 2000);
   }
+};
+
+const requestDemoFunds = () => {
+  dropdownOpen.value = false;
+  void fundTestTokens();
+};
+
+const refreshBalances = () => {
+  dropdownOpen.value = false;
+  requestBalancesRefresh();
+};
+
+const refreshInvoices = () => {
+  dropdownOpen.value = false;
+  requestInvoicesRefresh();
 };
 
 const logout = () => {
@@ -140,20 +162,62 @@ onUnmounted(() => window.removeEventListener('click', closeDropdown));
             class="bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 px-6 py-2.5 rounded-full transition-all flex items-center gap-3 shadow-sm text-sm font-medium"
           >
             <BaseIcon :name="ssoAccount ? 'WalletIcon' : 'ArrowRightOnRectangleIcon'" class="w-4 h-4 text-slate-500" />
-            <span :class="{ 'font-mono': ssoAccount }">
-              {{ ssoAccount ? `${ssoAccount.slice(0, 6)}...${ssoAccount.slice(-4)}` : 'Session' }}
-            </span>
+            <span>{{ sessionLabel }}</span>
             <BaseIcon name="ChevronDownIcon" :class="{ 'rotate-180': dropdownOpen }" class="w-3 h-3 text-slate-400 transition-transform" />
           </button>
           
-          <div v-if="dropdownOpen" class="absolute right-0 mt-2 w-48 bg-white border border-slate-100 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div v-if="dropdownOpen" class="absolute right-0 mt-2 w-72 bg-white border border-slate-100 rounded-2xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
             <button
               v-if="ssoAccount"
               @click="copyAddress"
+              class="w-full flex items-start gap-3 px-4 py-3 text-left text-xs rounded-xl transition-colors hover:bg-slate-50"
+            >
+              <BaseIcon
+                :name="copied ? 'CheckIcon' : 'WalletIcon'"
+                :class="copied ? 'text-green-500' : 'text-slate-400'"
+                class="mt-0.5 w-4 h-4 shrink-0"
+              />
+              <span class="min-w-0 flex-1">
+                <span class="block font-bold text-slate-600">
+                  {{ copied ? 'Address copied' : 'Connected address' }}
+                </span>
+                <span class="mt-1 block font-mono text-[11px] leading-relaxed text-slate-500" style="overflow-wrap:anywhere;">
+                  {{ ssoAccount }}
+                </span>
+              </span>
+            </button>
+            <button
+              v-if="ssoAccount"
+              @click="refreshBalances"
               class="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition-colors text-left"
             >
-              <BaseIcon :name="copied ? 'CheckIcon' : 'DocumentDuplicateIcon'" :class="copied ? 'text-green-500' : 'text-slate-400'" class="w-4 h-4" />
-              <span>{{ copied ? 'Copied!' : 'Copy address' }}</span>
+              <BaseIcon name="ArrowPathIcon" class="w-4 h-4 text-slate-400" />
+              <span>Refresh balances</span>
+            </button>
+            <button
+              @click="refreshInvoices"
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition-colors text-left"
+            >
+              <BaseIcon name="ArrowsRightLeftIcon" class="w-4 h-4 text-slate-400" />
+              <span>Refresh payment requests</span>
+            </button>
+            <button
+              v-if="ssoAccount"
+              :disabled="isTokenFunding"
+              @click="requestDemoFunds"
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-bold rounded-xl transition-colors text-left"
+              :class="
+                isTokenFunding
+                  ? 'cursor-not-allowed text-slate-400'
+                  : 'text-slate-600 hover:bg-slate-50'
+              "
+            >
+              <BaseIcon
+                name="BanknotesIcon"
+                class="w-4 h-4"
+                :class="isTokenFunding ? 'text-slate-300' : 'text-slate-400'"
+              />
+              <span>{{ isTokenFunding ? 'Requesting demo funds...' : 'Request demo funds' }}</span>
             </button>
             <button
               @click="logout"

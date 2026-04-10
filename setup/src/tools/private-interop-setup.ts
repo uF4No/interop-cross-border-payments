@@ -81,6 +81,8 @@ const privateInteropHandlerAbi = parseAbi([
 ]);
 
 const invoicePaymentAbi = parseAbi([
+  'function privateInteropHandler() view returns (address)',
+  'function setPrivateInteropHandler(address newPrivateInteropHandler)',
   'function getWhitelistedTokens() view returns (address[] tokens, string[] symbols)',
   'function whitelistToken(address token, string symbol)',
   'function exchangeRates(address token1, address token2) view returns (uint256)',
@@ -528,6 +530,33 @@ async function ensureExchangeRate(
   await chainC.publicClient.waitForTransactionReceipt({ hash });
 }
 
+async function ensurePrivateInteropHandler(
+  chainC: PrivateChainContext,
+  invoicePaymentAddress: Address
+): Promise<void> {
+  const currentHandler = getAddress(
+    (await chainC.publicClient.readContract({
+      address: invoicePaymentAddress,
+      abi: invoicePaymentAbi,
+      functionName: 'privateInteropHandler'
+    })) as Address
+  );
+
+  if (currentHandler.toLowerCase() === chainC.interopHandler.toLowerCase()) {
+    return;
+  }
+
+  const hash = await chainC.walletClient.writeContract({
+    address: invoicePaymentAddress,
+    abi: invoicePaymentAbi,
+    functionName: 'setPrivateInteropHandler',
+    args: [chainC.interopHandler],
+    account: walletAccount(chainC),
+    chain: undefined
+  });
+  await chainC.publicClient.waitForTransactionReceipt({ hash });
+}
+
 function symbolFromTokenKey(tokenKey: TokenKey) {
   return tokenKey.toUpperCase();
 }
@@ -597,6 +626,7 @@ export async function setupPrivateInteropConfig(args: {
   const chainA = createPrivateChainContext(args.chainA, manifest, args.executorPrivateKey);
   const chainB = createPrivateChainContext(args.chainB, manifest, args.executorPrivateKey);
   const chainC = createPrivateChainContext(args.chainC, manifest, args.executorPrivateKey);
+  await ensurePrivateInteropHandler(chainC, args.invoicePaymentAddress);
 
   const privateInterop: PrivateInteropDeployment = {
     enabled: true,

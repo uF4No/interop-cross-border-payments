@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { intro, outro } from '@clack/prompts';
 import type { Abi } from 'abitype';
@@ -29,6 +30,7 @@ import { updatePermissionApisCompose } from './tools/permissions-api-compose';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 import { type SsoDeploymentResult, deploySsoContracts } from './tools/sso-deploy';
 import { setupPrivateInteropConfig } from './tools/private-interop-setup';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { setupThreeChainContracts } from './tools/three-chain-setup';
 
 const DEFAULT_NATIVE_TOKEN_VAULT_ADDRESS = '0x0000000000000000000000000000000000010004' as Address;
@@ -36,6 +38,8 @@ const DEFAULT_L2_INTEROP_CENTER_ADDRESS = '0x00000000000000000000000000000000000
 const DEFAULT_ENTRYPOINT_MIN_BALANCE_WEI = 10_000_000_000_000_000n; // 0.01 ETH
 const DEFAULT_ENTRYPOINT_TARGET_BALANCE_WEI = 50_000_000_000_000_000n; // 0.05 ETH
 const DEFAULT_INVOICE_CONTRACT_INITIAL_ETH_WEI = 100_000_000_000_000_000n; // 0.1 ETH
+
+initRuntimeLogging('setup-3chain');
 
 type ChainConfig = {
   key: 'a' | 'b' | 'c';
@@ -161,6 +165,19 @@ function buildTokenContractsForPublicPermissions(
   });
 }
 
+function resetBackendTxnState(backendPath: string) {
+  const txnStateDir = path.join(backendPath, '.runtime', 'txn-state');
+  const stateFiles = ['pending-txs.json', 'finalized-txs.json', 'invoice-payouts.json'];
+
+  fs.mkdirSync(txnStateDir, { recursive: true });
+
+  for (const fileName of stateFiles) {
+    fs.writeFileSync(path.join(txnStateDir, fileName), '[]\n');
+  }
+
+  console.log(`Cleared backend txn-state snapshots in ${txnStateDir}`);
+}
+
 async function validateAndAuthenticateChain(
   chain: ChainConfig,
   adminPrivateKey: `0x${string}`,
@@ -232,6 +249,8 @@ async function main() {
   assertDotEnv(setupPath);
   assertDotEnv(webAppPath);
   assertDotEnv(backendPath);
+
+  resetBackendTxnState(backendPath);
 
   const contractsConfigPath = resolveContractsConfigPath(
     rootPath,

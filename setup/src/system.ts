@@ -11,8 +11,11 @@ import {
 } from './tools/contracts-config';
 import { createAdminSession } from './tools/create-admin-client';
 import { syncEnvFromContractsConfig } from './tools/env-sync';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 import { deploySsoContracts } from './tools/sso-deploy';
+
+initRuntimeLogging('setup-system');
 
 async function main() {
   intro('Deploying system contracts...');

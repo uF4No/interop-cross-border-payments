@@ -218,8 +218,33 @@ function syncCompletedPayoutStates() {
   }
 }
 
-function currentPayoutState(invoiceId: bigint): InvoicePayoutState | undefined {
-  return loadInvoicePayoutStates().find((state) => state.invoiceId === invoiceId.toString());
+function currentPayoutState(
+  invoicePayment: Address,
+  invoice: InvoiceDetails
+): InvoicePayoutState | undefined {
+  const normalizedInvoicePayment = getAddress(invoicePayment).toLowerCase();
+  const normalizedCreatorRefundAddress = getAddress(invoice.creatorRefundAddress).toLowerCase();
+  const normalizedBillingToken = getAddress(invoice.billingToken).toLowerCase();
+
+  return loadInvoicePayoutStates().find((state) => {
+    if (state.invoiceId !== invoice.id.toString()) {
+      return false;
+    }
+
+    if (state.invoicePayment) {
+      return state.invoicePayment.toLowerCase() === normalizedInvoicePayment;
+    }
+
+    // Legacy payout state files were keyed only by invoice id.
+    // Match them only if the immutable invoice context also matches, otherwise
+    // a redeployed InvoicePayment contract with recycled ids can suppress new payouts.
+    return (
+      state.creatorChainId === Number(invoice.creatorChainId) &&
+      state.creatorRefundAddress.toLowerCase() === normalizedCreatorRefundAddress &&
+      state.billingToken.toLowerCase() === normalizedBillingToken &&
+      state.amount === invoice.amount.toString()
+    );
+  });
 }
 
 async function ensurePayoutReleased(
@@ -227,7 +252,7 @@ async function ensurePayoutReleased(
   invoice: InvoiceDetails,
   chainCChainId: number
 ): Promise<void> {
-  const existing = currentPayoutState(invoice.id);
+  const existing = currentPayoutState(invoicePayment, invoice);
   if (
     existing?.status === 'released' ||
     existing?.status === 'bridge_submitted' ||
@@ -247,6 +272,7 @@ async function ensurePayoutReleased(
   if (alreadyReleased) {
     upsertInvoicePayoutState({
       invoiceId: invoice.id.toString(),
+      invoicePayment,
       creatorChainId: Number(invoice.creatorChainId),
       creatorRefundAddress: getAddress(invoice.creatorRefundAddress),
       billingToken: getAddress(invoice.billingToken),
@@ -274,6 +300,7 @@ async function ensurePayoutReleased(
   );
   upsertInvoicePayoutState({
     invoiceId: invoice.id.toString(),
+    invoicePayment,
     creatorChainId: Number(invoice.creatorChainId),
     creatorRefundAddress: getAddress(invoice.creatorRefundAddress),
     billingToken: getAddress(invoice.billingToken),
@@ -286,9 +313,10 @@ async function ensurePayoutReleased(
 
 async function ensureBridgeSubmitted(
   chainC: ChainDeployment,
+  invoicePayment: Address,
   invoice: InvoiceDetails
 ): Promise<void> {
-  const existing = currentPayoutState(invoice.id);
+  const existing = currentPayoutState(invoicePayment, invoice);
   if (existing?.status === 'bridge_submitted' || existing?.status === 'completed') {
     return;
   }
@@ -354,6 +382,7 @@ async function ensureBridgeSubmitted(
   if (bridgeReceipt.status !== 'success') {
     upsertInvoicePayoutState({
       invoiceId: invoice.id.toString(),
+      invoicePayment,
       creatorChainId: destinationChainId,
       creatorRefundAddress: getAddress(invoice.creatorRefundAddress),
       billingToken: getAddress(invoice.billingToken),
@@ -381,6 +410,7 @@ async function ensureBridgeSubmitted(
 
   upsertInvoicePayoutState({
     invoiceId: invoice.id.toString(),
+    invoicePayment,
     creatorChainId: destinationChainId,
     creatorRefundAddress: getAddress(invoice.creatorRefundAddress),
     billingToken: getAddress(invoice.billingToken),
@@ -409,7 +439,7 @@ export async function processInvoicePayouts() {
       continue;
     }
 
-    const state = currentPayoutState(invoice.id);
+    const state = currentPayoutState(invoicePayment, invoice);
     if (state?.status === 'completed') {
       continue;
     }
@@ -423,7 +453,7 @@ export async function processInvoicePayouts() {
 
     try {
       await ensurePayoutReleased(invoicePayment, invoice, chainCChainId);
-      await ensureBridgeSubmitted(chainC, invoice);
+      await ensureBridgeSubmitted(chainC, invoicePayment, invoice);
     } catch (error) {
       console.error(`[invoice-payout] failed for invoice ${invoice.id.toString()}:`, error);
     }

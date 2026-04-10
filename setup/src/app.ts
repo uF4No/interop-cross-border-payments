@@ -10,7 +10,10 @@ import {
 } from './tools/contracts-config';
 import { createAdminSession } from './tools/create-admin-client';
 import { syncEnvFromContractsConfig } from './tools/env-sync';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
+
+initRuntimeLogging('setup-app');
 
 async function main() {
   intro('Deploying app contracts...');

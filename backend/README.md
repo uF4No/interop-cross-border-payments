@@ -12,6 +12,28 @@ Run the backend service from the repository root:
 pnpm dev:backend
 ```
 
+## Runtime logs
+
+The backend writes logs both to the terminal and to persistent files in:
+
+- `backend/.runtime/`
+
+Current behavior:
+
+- active log file: `backend/.runtime/backend.log`
+- rotated files: `backend/.runtime/backend.1.log` through `backend/.runtime/backend.4.log`
+- rotation threshold: 5 MiB per file
+- retention: 4 archived files plus the current active file
+
+These files are gitignored. Each backend start writes a short session banner with the timestamp and PID so it is easier to separate runs when reading the log file later.
+
+This logging captures the normal backend stdout/stderr stream, which includes:
+
+- startup and shutdown messages
+- request logs
+- worker errors and other runtime exceptions
+- any direct `console` output emitted by the process or libraries
+
 ## API endpoints
 
 - `GET /health-check`  

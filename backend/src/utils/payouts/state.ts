@@ -7,6 +7,7 @@ export type InvoicePayoutStatus = 'released' | 'bridge_submitted' | 'bridge_fail
 
 export type InvoicePayoutState = {
   invoiceId: string;
+  invoicePayment?: Address;
   creatorChainId: number;
   creatorRefundAddress: Address;
   billingToken: Address;
@@ -20,6 +21,7 @@ export type InvoicePayoutState = {
 function normalizeInvoicePayoutState(state: InvoicePayoutState): InvoicePayoutState {
   return {
     ...state,
+    invoicePayment: state.invoicePayment ? getAddress(state.invoicePayment) : undefined,
     creatorRefundAddress: getAddress(state.creatorRefundAddress),
     billingToken: getAddress(state.billingToken)
   };

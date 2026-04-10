@@ -3,6 +3,7 @@ import { intro, outro, spinner } from '@clack/prompts';
 import { extractRes, postApplications } from './tools/api-client';
 import { assertDotEnv, extractConfig } from './tools/config-tools';
 import { createAdminSession } from './tools/create-admin-client';
+import { initRuntimeLogging } from './tools/runtime-logging';
 import { assertPrividiumApiUp } from './tools/service-assert';
 
 function parseRedirectUris(value: string): string[] {
@@ -11,6 +12,8 @@ function parseRedirectUris(value: string): string[] {
     .map((uri) => uri.trim())
     .filter(Boolean);
 }
+
+initRuntimeLogging('setup-create-app');
 
 async function main() {
   intro('Creating Prividium application...');

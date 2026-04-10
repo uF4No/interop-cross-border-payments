@@ -35,7 +35,9 @@ const WAIT_TIMEOUT_MS = 300_000;
 
 const invoicePaymentAbi = parseAbi([
   'function admin() view returns (address)',
+  'function privateInteropHandler() view returns (address)',
   'function setAdmin(address newAdmin)',
+  'function setPrivateInteropHandler(address newPrivateInteropHandler)',
   'function whitelistToken(address token, string symbol)',
   'function getWhitelistedTokens() view returns (address[] tokens, string[] symbols)',
   'function exchangeRates(address token1, address token2) view returns (uint256)',
@@ -257,6 +259,22 @@ function readArtifact(contractsDir: string, artifactPath: string): { abi: Abi; b
 async function hasCode(client: ChainContext['publicClient'], address: Address): Promise<boolean> {
   const bytecode = await client.getBytecode({ address });
   return bytecode !== undefined && bytecode !== '0x';
+}
+
+async function supportsPrivateInteropHandlerConfig(
+  context: ChainContext,
+  invoicePaymentAddress: Address
+): Promise<boolean> {
+  try {
+    await context.publicClient.readContract({
+      address: invoicePaymentAddress,
+      abi: invoicePaymentAbi,
+      functionName: 'privateInteropHandler'
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function deployContractFromArtifact(args: {
@@ -782,12 +800,26 @@ export async function setupThreeChainContracts(
   const chainB = createChainContext(args.chainB, args.executorPrivateKey);
   const chainC = createChainContext(args.chainC, args.executorPrivateKey);
 
+  const configuredInvoiceAddress = args.existingContractsConfig?.chains?.c?.invoicePayment;
+  const compatibleInvoiceAddress =
+    configuredInvoiceAddress &&
+    (await hasCode(chainC.publicClient, getAddress(configuredInvoiceAddress))) &&
+    (await supportsPrivateInteropHandlerConfig(chainC, getAddress(configuredInvoiceAddress)))
+      ? getAddress(configuredInvoiceAddress)
+      : undefined;
+
+  if (configuredInvoiceAddress && !compatibleInvoiceAddress) {
+    console.log(
+      '  Existing InvoicePayment deployment is incompatible with private interop shadow-account support; redeploying.'
+    );
+  }
+
   const invoiceDeployment = await deployContractFromArtifact({
     context: chainC,
     contractsDir: args.contractsDir,
     artifactPath: path.join('out', 'InvoicePayment.sol', 'InvoicePayment.json'),
     constructorArgs: [args.adminAddress],
-    existingAddress: args.existingContractsConfig?.chains?.c?.invoicePayment,
+    existingAddress: compatibleInvoiceAddress,
     contractLabel: 'InvoicePayment'
   });
   await ensureInvoiceAdmin(chainC, invoiceDeployment.address, args.adminAddress);

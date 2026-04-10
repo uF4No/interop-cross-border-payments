@@ -1,7 +1,7 @@
 import { metaMask } from '@wagmi/connectors';
 import { http, createConfig } from '@wagmi/core';
 import { defineChain } from 'viem';
-import { zksync } from 'viem/chains';
+import { getExplorerBaseUrl } from './utils/explorer';
 
 export const prividiumChain = defineChain({
   id: Number.parseInt(import.meta.env.VITE_PRIVIDIUM_CHAIN_ID),
@@ -22,7 +22,7 @@ export const prividiumChain = defineChain({
   blockExplorers: {
     default: {
       name: 'Explorer',
-      url: 'https://explorer.zksync.io/'
+      url: getExplorerBaseUrl('A') ?? 'https://explorer.zksync.io'
     }
   },
   testnet: true

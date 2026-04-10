@@ -58,6 +58,7 @@ contract InvoicePayment {
     // Admin address
     address public admin;
     address public payoutOperator;
+    address public privateInteropHandler;
     
     // Invoice status enum
     enum InvoiceStatus {
@@ -147,6 +148,11 @@ contract InvoicePayment {
         payoutOperator = newPayoutOperator;
         emit PayoutOperatorUpdated(newPayoutOperator);
     }
+
+    function setPrivateInteropHandler(address newPrivateInteropHandler) external onlyAdmin {
+        privateInteropHandler = newPrivateInteropHandler;
+        emit PrivateInteropHandlerUpdated(newPrivateInteropHandler);
+    }
     
     /// @notice Sets the cross-chain fee.
     /// @param _crossChainFee The new cross-chain fee in wei.
@@ -197,6 +203,7 @@ contract InvoicePayment {
     event CrossChainFeeUpdated(uint256 newFee);
     event CrossChainTransferInitiated(address token, uint256 amount, address recipient, uint256 chainId);
     event PayoutOperatorUpdated(address indexed newOperator);
+    event PrivateInteropHandlerUpdated(address indexed newHandler);
     event CreatorPayoutReleased(
         uint256 indexed id,
         address indexed payoutOperator,
@@ -215,6 +222,22 @@ contract InvoicePayment {
             chainId,
             account
         );
+    }
+
+    function _isAuthorizedCrossChainSender(
+        address sender,
+        address account,
+        uint256 chainId
+    ) internal view returns (bool) {
+        if (sender == _expectedCrossChainSender(account, chainId)) {
+            return true;
+        }
+
+        if (privateInteropHandler == address(0)) {
+            return false;
+        }
+
+        return sender == IInteropHandler(privateInteropHandler).getShadowAccountAddress(chainId, account);
     }
 
     function _encodeNativeTokenVaultAssetId(uint256 chainId, address token) internal pure returns (bytes32) {
@@ -318,8 +341,10 @@ contract InvoicePayment {
         if (creatorChainId == block.chainid) {
             require(msg.sender == creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = _expectedCrossChainSender(creatorRefundAddress, creatorChainId);
-            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be shadow account of creator refund address");
+            require(
+                _isAuthorizedCrossChainSender(msg.sender, creatorRefundAddress, creatorChainId),
+                "InvoicePayment: msg.sender must be shadow account of creator refund address"
+            );
         }
         
         // Create new invoice
@@ -370,8 +395,14 @@ contract InvoicePayment {
         if (invoice.creatorChainId == block.chainid) {
             require(msg.sender == invoice.creatorRefundAddress, "InvoicePayment: msg.sender must be creator refund address");
         } else {
-            address expectedSender = _expectedCrossChainSender(invoice.creatorRefundAddress, invoice.creatorChainId);
-            require(msg.sender == expectedSender, "InvoicePayment: msg.sender must be shadow account of creator refund address");
+            require(
+                _isAuthorizedCrossChainSender(
+                    msg.sender,
+                    invoice.creatorRefundAddress,
+                    invoice.creatorChainId
+                ),
+                "InvoicePayment: msg.sender must be shadow account of creator refund address"
+            );
         }
         
         invoice.status = InvoiceStatus.Cancelled;

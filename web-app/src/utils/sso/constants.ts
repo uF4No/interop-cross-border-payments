@@ -1,4 +1,5 @@
 import { defineChain } from 'viem';
+import { getExplorerBaseUrl } from '../explorer';
 
 // LocalStorage keys
 export const STORAGE_KEY_PASSKEY = 'zksync_sso_passkey';
@@ -76,8 +77,7 @@ export const ssoChain = defineChain({
   blockExplorers: {
     default: {
       name: 'Explorer',
-      // TODO: update with prividium explorer
-      url: 'https://explorer.zksync.io/'
+      url: getExplorerBaseUrl(readSelectedChainKey()) ?? 'https://explorer.zksync.io'
     }
   }
 });

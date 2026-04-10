@@ -1,6 +1,7 @@
 import { type PrividiumChain, type UserProfile, createPrividiumChain } from 'prividium';
 import { computed, ref } from 'vue';
 import { STORAGE_KEY_ACCOUNT, STORAGE_KEY_PASSKEY } from '../utils/sso/constants';
+import { getExplorerBaseUrl } from '../utils/explorer';
 
 export type PrividiumChainKey = 'A' | 'B';
 
@@ -16,6 +17,7 @@ type ChainEnvConfig = {
   companyName: string;
   accentColor: string;
   companyIcon: string;
+  explorerUrl?: string;
 };
 
 const DEFAULT_CHAIN_KEY: PrividiumChainKey = 'A';
@@ -108,6 +110,7 @@ const readChainEnv = (chainKey: PrividiumChainKey): ChainEnvConfig => {
       'VITE_COMPANY_ICON',
       'CubeIcon'
     ) ?? 'CubeIcon';
+  const explorerUrl = getExplorerBaseUrl(chainKey);
 
   if (
     !chainIdRaw ||
@@ -139,7 +142,8 @@ const readChainEnv = (chainKey: PrividiumChainKey): ChainEnvConfig => {
     nativeCurrencySymbol,
     companyName,
     accentColor,
-    companyIcon
+    companyIcon,
+    explorerUrl
   };
 };
 
@@ -172,7 +176,7 @@ const buildSdkChain = (config: ChainEnvConfig) =>
     blockExplorers: {
       default: {
         name: 'Explorer',
-        url: 'https://explorer.zksync.io/'
+        url: config.explorerUrl ?? 'https://explorer.zksync.io'
       }
     }
   }) as const;
