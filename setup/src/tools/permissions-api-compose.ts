@@ -18,6 +18,7 @@ type BundlerComposeServiceConfig = {
 
 type UpdatePermissionApisComposeArgs = {
   composePath: string;
+  bundlerComposePath?: string;
   services: PermissionApiComposeServiceConfig[];
   bundlers?: BundlerComposeServiceConfig[];
 };
@@ -29,6 +30,7 @@ type ComposeUpdateServiceResult = {
 
 export type PermissionApiComposeUpdateResult = {
   composePath: string;
+  bundlerComposePath?: string;
   services: ComposeUpdateServiceResult[];
   restartCommand: string;
 };
@@ -221,9 +223,18 @@ export function updatePermissionApisCompose(
   if (!fs.existsSync(args.composePath)) {
     throw new Error(`Docker compose file not found: ${args.composePath}`);
   }
+  if (args.bundlerComposePath && !fs.existsSync(args.bundlerComposePath)) {
+    throw new Error(`Bundler docker compose file not found: ${args.bundlerComposePath}`);
+  }
 
   const currentContent = normalizeLineEndings(fs.readFileSync(args.composePath, 'utf8'));
   const lines = currentContent.split('\n');
+  const bundlerComposePath = args.bundlerComposePath ?? args.composePath;
+  const bundlerContent =
+    bundlerComposePath === args.composePath
+      ? currentContent
+      : normalizeLineEndings(fs.readFileSync(bundlerComposePath, 'utf8'));
+  const bundlerLines = bundlerComposePath === args.composePath ? lines : bundlerContent.split('\n');
   const servicesSummary: ComposeUpdateServiceResult[] = [];
 
   for (const serviceConfig of args.services) {
@@ -283,18 +294,27 @@ export function updatePermissionApisCompose(
   }
 
   for (const bundlerConfig of args.bundlers ?? []) {
-    setBundlerEntrypoint(lines, bundlerConfig.serviceName, bundlerConfig.entryPoint);
+    setBundlerEntrypoint(bundlerLines, bundlerConfig.serviceName, bundlerConfig.entryPoint);
   }
 
   const nextContent = `${lines.join('\n').replace(/\n*$/, '\n')}`;
   if (nextContent !== currentContent) {
     fs.writeFileSync(args.composePath, nextContent, 'utf8');
   }
+  if (bundlerComposePath !== args.composePath) {
+    const nextBundlerContent = `${bundlerLines.join('\n').replace(/\n*$/, '\n')}`;
+    if (nextBundlerContent !== bundlerContent) {
+      fs.writeFileSync(bundlerComposePath, nextBundlerContent, 'utf8');
+    }
+  }
 
   return {
     composePath: args.composePath,
+    bundlerComposePath: bundlerComposePath === args.composePath ? undefined : bundlerComposePath,
     services: servicesSummary,
     restartCommand:
-      'docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate bundler-l2a bundler-l2b permissions-api-l2a permissions-api-l2b'
+      bundlerComposePath === args.composePath
+        ? 'docker compose -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate bundler-l2a bundler-l2b permissions-api-l2a permissions-api-l2b'
+        : 'docker compose -f prividium-3chain-local/docker-compose-deps.yml -f prividium-3chain-local/docker-compose.yml up -d --no-deps --force-recreate bundler-l2a bundler-l2b permissions-api-l2a permissions-api-l2b'
   };
 }

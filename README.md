@@ -49,11 +49,15 @@ If `setup/.env` already exists, the command leaves it unchanged.
 
 ### 3. Start the local chain stack
 
-Run the following command to start the chains locally.
+Run the following command to start the chains locally with interop enabled:
 
 ```bash
-cd prividium-3chain-local && docker compose up -d
+cd prividium-3chain-local && docker compose -f docker-compose-deps.yml -f docker-compose.yml up -d
+
 ```
+
+> [!NOTE]
+> For public + private inerop run `cd prividium-3chain-local && docker compose -f docker-compose-deps.yml -f docker-compose.yml -f docker-compose-private-interop.yml up -d`
 
 ### 4. Compile smart contracts
 

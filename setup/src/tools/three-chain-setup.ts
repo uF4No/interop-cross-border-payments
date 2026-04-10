@@ -133,6 +133,29 @@ type SetupThreeChainContractsArgs = {
   interopBroadcasterApiUrl?: string;
 };
 
+type BundleDebugInfo = {
+  txHash: Hex;
+  l2l1MessageHash?: Hex;
+  bundleHash?: Hex;
+  blockNumber?: bigint;
+};
+
+type RelayStatusDebugInfo = {
+  endpoint: string;
+  httpStatus?: number;
+  status?: string;
+};
+
+type BridgeDebugContext = {
+  tokenSymbol: string;
+  source: ChainContext;
+  destination: ChainContext;
+  nativeTokenVaultAddress: Address;
+  assetId: Hex;
+  relayStatus?: RelayStatusDebugInfo;
+  bundle?: BundleDebugInfo;
+};
+
 function walletAccount(context: ChainContext) {
   const account = context.walletClient.account;
   if (!account) {
@@ -397,14 +420,72 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatRelayStatus(debug: RelayStatusDebugInfo | undefined) {
+  if (!debug) {
+    return 'not checked (INTEROP_BROADCASTER_API_URL unset)';
+  }
+
+  return [
+    `endpoint=${debug.endpoint}`,
+    debug.httpStatus !== undefined ? `http=${debug.httpStatus}` : undefined,
+    debug.status ? `status=${debug.status}` : 'status=unknown'
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function formatBundleDebug(debug: BundleDebugInfo | undefined) {
+  if (!debug) {
+    return 'unavailable';
+  }
+
+  return [
+    `tx=${debug.txHash}`,
+    debug.bundleHash ? `bundle=${debug.bundleHash}` : undefined,
+    debug.l2l1MessageHash ? `l2l1=${debug.l2l1MessageHash}` : undefined,
+    debug.blockNumber !== undefined ? `block=${debug.blockNumber}` : undefined
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function extractBundleDebugInfo(
+  receipt: Awaited<ReturnType<ChainContext['publicClient']['waitForTransactionReceipt']>>,
+  interopCenterAddress: Address
+): BundleDebugInfo {
+  const debugInfo: BundleDebugInfo = {
+    txHash: receipt.transactionHash,
+    blockNumber: receipt.blockNumber
+  };
+
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== interopCenterAddress.toLowerCase()) {
+      continue;
+    }
+
+    if (log.data.length < 2 + 64 * 3) {
+      continue;
+    }
+
+    debugInfo.l2l1MessageHash = `0x${log.data.slice(2, 66)}` as Hex;
+    debugInfo.bundleHash = `0x${log.data.slice(66, 130)}` as Hex;
+    return debugInfo;
+  }
+
+  return debugInfo;
+}
+
 async function waitForMaterializedToken(
   destination: ChainContext,
   nativeTokenVaultAddress: Address,
   assetId: Hex,
+  debugContext: BridgeDebugContext,
   timeoutMs = WAIT_TIMEOUT_MS
 ): Promise<Address> {
   const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     const tokenAddress = await readTokenAddressForAsset(
       destination,
       nativeTokenVaultAddress,
@@ -413,11 +494,28 @@ async function waitForMaterializedToken(
     if (tokenAddress) {
       return tokenAddress;
     }
+
+    if (attempt === 1 || attempt % 10 === 0) {
+      const head = await destination.publicClient.getBlockNumber();
+      console.log(
+        `  Waiting for ${debugContext.tokenSymbol} bridge ${debugContext.source.label}->${debugContext.destination.label}: assetId=${assetId} head=${head} bundle=[${formatBundleDebug(debugContext.bundle)}] relay=[${formatRelayStatus(debugContext.relayStatus)}]`
+      );
+    }
+
     await sleep(WAIT_INTERVAL_MS);
   }
 
+  const destinationHead = await destination.publicClient.getBlockNumber();
+  const currentTokenAddress =
+    (await destination.publicClient.readContract({
+      address: nativeTokenVaultAddress,
+      abi: nativeTokenVaultAbi,
+      functionName: 'tokenAddress',
+      args: [assetId]
+    })) as Address;
+
   throw new Error(
-    `Timed out waiting for bridged token ${assetId} to materialize on chain ${destination.label}`
+    `Timed out waiting for bridged token ${assetId} to materialize on chain ${destination.label}. token=${debugContext.tokenSymbol} source=${debugContext.source.label}(${debugContext.source.chainId}) destination=${debugContext.destination.label}(${debugContext.destination.chainId}) vault=${nativeTokenVaultAddress} bundle=[${formatBundleDebug(debugContext.bundle)}] relay=[${formatRelayStatus(debugContext.relayStatus)}] destinationHead=${destinationHead} destinationTokenAddress=${currentTokenAddress}`
   );
 }
 
@@ -426,9 +524,10 @@ async function waitForInteropRelay(
   txHash: Hex,
   senderChainId: number,
   timeoutMs = WAIT_TIMEOUT_MS
-): Promise<void> {
+): Promise<RelayStatusDebugInfo> {
   const baseUrl = broadcasterApiUrl.replace(/\/+$/, '');
   const deadline = Date.now() + timeoutMs;
+  let lastStatus: RelayStatusDebugInfo = { endpoint: baseUrl };
 
   while (Date.now() < deadline) {
     const url = new URL(`${baseUrl}/api/interop-transaction-status`);
@@ -436,20 +535,26 @@ async function waitForInteropRelay(
     url.searchParams.set('senderChainId', String(senderChainId));
 
     const response = await fetch(url);
+    lastStatus = { endpoint: baseUrl, httpStatus: response.status };
     if (response.ok) {
       const payload = (await response.json()) as { status?: string };
+      lastStatus.status = payload.status;
       if (payload.status === 'completed') {
-        return;
+        return lastStatus;
       }
       if (payload.status === 'failed') {
-        throw new Error(`Interop relay reported failure for ${txHash}`);
+        throw new Error(
+          `Interop relay reported failure for ${txHash}. relay=[${formatRelayStatus(lastStatus)}]`
+        );
       }
     }
 
     await sleep(WAIT_INTERVAL_MS);
   }
 
-  throw new Error(`Timed out waiting for interop relay completion for ${txHash}`);
+  throw new Error(
+    `Timed out waiting for interop relay completion for ${txHash}. relay=[${formatRelayStatus(lastStatus)}]`
+  );
 }
 
 async function materializeBridgedToken(args: {
@@ -458,6 +563,7 @@ async function materializeBridgedToken(args: {
   nativeTokenVaultAddress: Address;
   interopCenterAddress: Address;
   assetId: Hex;
+  tokenSymbol: string;
   broadcasterApiUrl?: string;
 }): Promise<Address> {
   const existingAddress = await readTokenAddressForAsset(
@@ -495,13 +601,38 @@ async function materializeBridgedToken(args: {
     chain: undefined,
     account: walletAccount(args.source)
   });
-  await args.source.publicClient.waitForTransactionReceipt({ hash: txHash });
+  const receipt = await args.source.publicClient.waitForTransactionReceipt({ hash: txHash });
+  const bundleDebug = extractBundleDebugInfo(receipt, args.interopCenterAddress);
+  console.log(
+    `  Sent ${args.tokenSymbol} bridge bundle ${args.source.label}->${args.destination.label}: assetId=${args.assetId} ${formatBundleDebug(bundleDebug)} interopCenter=${args.interopCenterAddress}`
+  );
 
+  let relayStatus: RelayStatusDebugInfo | undefined;
   if (args.broadcasterApiUrl) {
-    await waitForInteropRelay(args.broadcasterApiUrl, txHash, args.source.chainId);
+    relayStatus = await waitForInteropRelay(args.broadcasterApiUrl, txHash, args.source.chainId);
+    console.log(
+      `  Relay status for ${args.tokenSymbol} bridge ${args.source.label}->${args.destination.label}: ${formatRelayStatus(relayStatus)}`
+    );
+  } else {
+    console.log(
+      `  No broadcaster API configured for ${args.tokenSymbol} bridge ${args.source.label}->${args.destination.label}; waiting for token materialization using on-chain polling only`
+    );
   }
 
-  return waitForMaterializedToken(args.destination, args.nativeTokenVaultAddress, args.assetId);
+  return waitForMaterializedToken(
+    args.destination,
+    args.nativeTokenVaultAddress,
+    args.assetId,
+    {
+      tokenSymbol: args.tokenSymbol,
+      source: args.source,
+      destination: args.destination,
+      nativeTokenVaultAddress: args.nativeTokenVaultAddress,
+      assetId: args.assetId,
+      relayStatus,
+      bundle: bundleDebug
+    }
+  );
 }
 
 async function ensureInvoiceAdmin(
@@ -725,12 +856,16 @@ export async function setupThreeChainContracts(
       args.nativeTokenVaultAddress,
       canonicalDeployment.address
     );
+    console.log(
+      `  Prepared public token ${tokenSpec.symbol} on chain C: token=${canonicalDeployment.address} assetId=${assetId}`
+    );
     const chainATokenAddress = await materializeBridgedToken({
       source: chainC,
       destination: chainA,
       nativeTokenVaultAddress: args.nativeTokenVaultAddress,
       interopCenterAddress: args.interopCenterAddress,
       assetId,
+      tokenSymbol: tokenSpec.symbol,
       broadcasterApiUrl: args.interopBroadcasterApiUrl
     });
     const chainBTokenAddress = await materializeBridgedToken({
@@ -739,6 +874,7 @@ export async function setupThreeChainContracts(
       nativeTokenVaultAddress: args.nativeTokenVaultAddress,
       interopCenterAddress: args.interopCenterAddress,
       assetId,
+      tokenSymbol: tokenSpec.symbol,
       broadcasterApiUrl: args.interopBroadcasterApiUrl
     });
 

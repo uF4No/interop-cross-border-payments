@@ -1,4 +1,4 @@
 [submodule "prividium-3chain-local"]
 	path = prividium-3chain-local
 	url = https://github.com/uF4No/prividium-3chain-local.git
-	branch = codex/local-stack-followups
+	branch = feat/private-interop

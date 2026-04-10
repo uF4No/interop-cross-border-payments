@@ -184,11 +184,34 @@ export async function postContracts(
   return client.post<Contract>('/contracts/', body);
 }
 
+export async function putContract(
+  client: ApiClient,
+  contractIdOrAddress: string,
+  body: {
+    name: string;
+    description: string;
+    abi: string;
+    contractAddress: string;
+    discloseBytecode: boolean;
+    discloseErc20Balance: boolean;
+    erc20LockAddresses: string[];
+  }
+): Promise<ApiResponse<Contract>> {
+  return client.put<Contract>(`/contracts/${encodeURIComponent(contractIdOrAddress)}`, body);
+}
+
 export async function getContractByAddress(
   client: ApiClient,
   contractAddress: string
 ): Promise<ApiResponse<Contract>> {
   return client.get<Contract>(`/contracts/${encodeURIComponent(contractAddress)}`);
+}
+
+export async function deleteContract(
+  client: ApiClient,
+  contractIdOrAddress: string
+): Promise<ApiResponse<{ success?: boolean }>> {
+  return client.delete<{ success?: boolean }>(`/contracts/${encodeURIComponent(contractIdOrAddress)}`);
 }
 
 export async function postContractPermissions(

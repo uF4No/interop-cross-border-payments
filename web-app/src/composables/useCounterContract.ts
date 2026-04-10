@@ -1,5 +1,6 @@
 import { type Address, type PublicClient, encodeFunctionData, getContract, pad, toHex } from 'viem';
-import { ssoContracts } from '../utils/sso/constants';
+import { getSsoContracts } from '../utils/sso/constants';
+import { usePrividium } from './usePrividium';
 import {
   assertPasskeyMatchesAccount,
   clearSavedAccountAddress,
@@ -55,6 +56,7 @@ export function useCounterContract(
     calldata: `0x${string}`;
   }) => Promise<{ message: string; activeUntil: string }>
 ) {
+  const { selectedChainKey } = usePrividium();
   const contract = getContract({
     address: contractAddress,
     abi: counterAbi,
@@ -100,21 +102,22 @@ export function useCounterContract(
     if (!savedPasskey || !savedAccount) {
       throw new Error('No SSO account found. Create and link a passkey first.');
     }
+    const activeSsoContracts = getSsoContracts(selectedChainKey.value);
 
     const accountEntryPoint = await readAccountEntryPoint(rpcClient, savedAccount);
     if (
       accountEntryPoint &&
-      accountEntryPoint.toLowerCase() !== ssoContracts.entryPoint.toLowerCase()
+      accountEntryPoint.toLowerCase() !== activeSsoContracts.entryPoint.toLowerCase()
     ) {
       clearSavedAccountAddress();
       throw new Error(
-        `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but this app expects ${ssoContracts.entryPoint}. Re-login and create/link a compatible passkey account.`
+        `Linked passkey account was created for EntryPoint ${accountEntryPoint}, but this app expects ${activeSsoContracts.entryPoint}. Re-login and create/link a compatible passkey account.`
       );
     }
 
     await assertPasskeyMatchesAccount({
       client: rpcClient,
-      webauthnValidator: ssoContracts.webauthnValidator,
+      webauthnValidator: activeSsoContracts.webauthnValidator,
       accountAddress: savedAccount,
       passkeyCredentials: savedPasskey
     });
@@ -134,7 +137,11 @@ export function useCounterContract(
       txData,
       gasOptions,
       rpcClient,
-      enableWalletToken
+      enableWalletToken,
+      {
+        chainKey: selectedChainKey.value,
+        ssoContracts: activeSsoContracts
+      }
     );
   };
 

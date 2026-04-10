@@ -38,6 +38,17 @@ export function setDotEnvConfig(dirPath: string, name: string, value: string): v
   set(name, value, { path: path.join(dirPath, '.env'), encrypt: false });
 }
 
+export function removeDotEnvConfig(dirPath: string, name: string): void {
+  const envPath = path.join(dirPath, '.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+  const filtered = lines.filter((line) => !line.startsWith(`${name}=`));
+  fs.writeFileSync(envPath, filtered.join('\n'));
+}
+
 export function assertDotEnv(baseDir: string) {
   if (!fs.existsSync(path.join(baseDir, '.env'))) {
     fs.copyFileSync(path.join(baseDir, '.env.example'), path.join(baseDir, '.env'));

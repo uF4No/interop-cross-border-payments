@@ -1,8 +1,15 @@
-import { type Address, formatUnits, getAddress, isAddress, parseAbi } from 'viem';
+import {
+  type Address,
+  createPublicClient,
+  formatUnits,
+  getAddress,
+  http,
+  isAddress,
+  parseAbi
+} from 'viem';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { usePrividium } from './usePrividium';
-import { useRpcClient } from './useRpcClient';
 import { useSsoAccount } from './useSsoAccount';
 
 type TokenSymbol = 'USDC' | 'SGD' | 'TBILL';
@@ -31,6 +38,20 @@ const erc20Abi = parseAbi([
 ]);
 type RefreshReason = 'auto' | 'dependency' | 'manual';
 
+function readEnv(key: string) {
+  return env[key]?.trim() || undefined;
+}
+
+function readFirstDefined(...keys: string[]) {
+  for (const key of keys) {
+    const value = readEnv(key);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
 function readTokenAddress(symbol: TokenSymbol, chainKey: 'A' | 'B'): Address | undefined {
   const candidates = [
     `VITE_TOKEN_${symbol}_ADDRESS_CHAIN_${chainKey}`,
@@ -53,6 +74,14 @@ function getConfiguredTokens(chainKey: 'A' | 'B'): ConfiguredToken[] {
     const address = readTokenAddress(symbol, chainKey);
     return address ? [{ symbol, address }] : [];
   });
+}
+
+function readChainRpcUrl(chainKey: 'A' | 'B') {
+  return readFirstDefined(
+    `VITE_CHAIN_${chainKey}_RPC_URL`,
+    `VITE_PRIVIDIUM_CHAIN_${chainKey}_RPC_URL`,
+    'VITE_PRIVIDIUM_RPC_URL'
+  );
 }
 
 function addThousandsSeparators(value: string) {
@@ -109,9 +138,18 @@ function areBalanceRowsEqual(
 }
 
 export function useActiveChainBalances() {
-  const rpcClient = useRpcClient();
   const { account } = useSsoAccount();
   const { getChain, selectedChainKey } = usePrividium();
+  const readClient = computed(() => {
+    const rpcUrl = readChainRpcUrl(selectedChainKey.value);
+    if (!rpcUrl) {
+      return null;
+    }
+
+    return createPublicClient({
+      transport: http(rpcUrl)
+    });
+  });
 
   const rows = ref<ActiveChainBalanceRow[]>([]);
   const isLoading = ref(false);
@@ -127,27 +165,39 @@ export function useActiveChainBalances() {
   const nativeSymbol = computed(() => getChain().nativeCurrency?.symbol || 'ETH');
 
   const loadBalanceRows = async (userAddress: Address, currentChainKey: 'A' | 'B') => {
-    const client = rpcClient.value;
+    const client = readClient.value;
+    if (!client) {
+      throw new Error(`Missing RPC URL for chain ${currentChainKey}.`);
+    }
+
     const configuredTokens = getConfiguredTokens(currentChainKey);
 
     const nativeBalancePromise = client.getBalance({ address: userAddress });
     const tokenRowsPromise = Promise.all(
       configuredTokens.map(async (token): Promise<ActiveChainBalanceRow> => {
-        const [rawBalance, decimals] = await Promise.all([
-          client.readContract({
-            address: token.address,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [userAddress],
-            account: userAddress
-          }),
-          client.readContract({
-            address: token.address,
-            abi: erc20Abi,
-            functionName: 'decimals',
-            account: userAddress
-          })
-        ]);
+        let rawBalance: bigint;
+        let decimals: number;
+
+        try {
+          [rawBalance, decimals] = await Promise.all([
+            client.readContract({
+              address: token.address,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [userAddress],
+              account: userAddress
+            }),
+            client.readContract({
+              address: token.address,
+              abi: erc20Abi,
+              functionName: 'decimals',
+              account: userAddress
+            })
+          ]);
+        } catch (error) {
+          const message = formatReadError(error);
+          throw new Error(`Failed to read ${token.symbol} on chain ${currentChainKey}: ${message}`);
+        }
 
         return {
           asset: token.symbol,
@@ -224,7 +274,7 @@ export function useActiveChainBalances() {
     requestId += 1;
     const activeRequestId = requestId;
 
-    if (!account.value || !rpcClient.value) {
+    if (!account.value || !readClient.value) {
       rows.value = [];
       error.value = '';
       isLoading.value = false;
@@ -299,7 +349,7 @@ export function useActiveChainBalances() {
   const refresh = () => runRefresh('manual');
 
   watch(
-    [account, rpcClient, selectedChainKey],
+    [account, readClient, selectedChainKey],
     () => {
       void runRefresh('dependency');
     },

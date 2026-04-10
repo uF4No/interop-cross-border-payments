@@ -8,7 +8,14 @@ import {
   getPublicKeyBytesFromPasskeySignature
 } from 'zksync-sso-stable/utils';
 
-import { RP_ID, STORAGE_KEY_ACCOUNT, STORAGE_KEY_PASSKEY, ssoContracts } from './constants';
+import {
+  getSsoContracts,
+  RP_ID,
+  STORAGE_KEY_ACCOUNT,
+  STORAGE_KEY_PASSKEY,
+  type SsoChainKey,
+  type SsoContractsConfig
+} from './constants';
 import type { PasskeyCredential } from './types';
 
 const ACCOUNT_STORAGE_EVENT = 'sso-account-storage-updated';
@@ -167,13 +174,18 @@ export async function assertPasskeyMatchesAccount(params: {
 export async function selectExistingPasskey(
   userName: string,
   client?: PublicClient,
-  fromAddress?: Address
+  fromAddress?: Address,
+  config?: {
+    chainKey?: SsoChainKey;
+    ssoContracts?: SsoContractsConfig;
+  }
 ) {
   if (!client) {
     throw new Error('Authenticated RPC client required to load existing passkeys.');
   }
-  const options = await generatePasskeyAuthenticationOptions({});
-  const authenticationResponse = await startAuthentication({ optionsJSON: options });
+  const resolvedSsoContracts = config?.ssoContracts ?? getSsoContracts(config?.chainKey);
+  const authenticationOptions = await generatePasskeyAuthenticationOptions({});
+  const authenticationResponse = await startAuthentication({ optionsJSON: authenticationOptions });
   const credentialIdHex = toHex(base64UrlToBytes(authenticationResponse.id));
   const domain = window.location.origin;
   const { savedAccount } = loadExistingPasskey();
@@ -182,14 +194,16 @@ export async function selectExistingPasskey(
   const authClient = client;
 
   console.debug('[passkeys] getAccountList', {
-    contract: ssoContracts.webauthnValidator,
+    chainKey: config?.chainKey,
+    contract: resolvedSsoContracts.webauthnValidator,
+    entryPoint: resolvedSsoContracts.entryPoint,
     domain,
     credentialId: credentialIdHex,
     from
   });
 
   const accounts = (await authClient.readContract({
-    address: ssoContracts.webauthnValidator,
+    address: resolvedSsoContracts.webauthnValidator,
     abi: WEBAUTHN_VALIDATOR_ABI,
     functionName: 'getAccountList',
     args: [domain, credentialIdHex],
@@ -200,7 +214,7 @@ export async function selectExistingPasskey(
     throw new Error('No account found for selected passkey');
   }
 
-  const expectedEntryPoint = ssoContracts.entryPoint.toLowerCase();
+  const expectedEntryPoint = resolvedSsoContracts.entryPoint.toLowerCase();
   let accountAddress: Address | null = null;
 
   for (const candidate of accounts) {
@@ -213,12 +227,12 @@ export async function selectExistingPasskey(
 
   if (!accountAddress) {
     throw new Error(
-      `No account found for this passkey on the configured EntryPoint (${ssoContracts.entryPoint}). Create a new passkey account.`
+      `No account found for this passkey on the configured EntryPoint (${resolvedSsoContracts.entryPoint}). Create a new passkey account.`
     );
   }
 
   const rawKey = (await authClient.readContract({
-    address: ssoContracts.webauthnValidator,
+    address: resolvedSsoContracts.webauthnValidator,
     abi: WEBAUTHN_VALIDATOR_ABI,
     functionName: 'getAccountKey',
     args: [domain, credentialIdHex, accountAddress],

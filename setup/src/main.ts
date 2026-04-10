@@ -28,6 +28,7 @@ import { syncEnvFromContractsConfig } from './tools/env-sync';
 import { updatePermissionApisCompose } from './tools/permissions-api-compose';
 import { assertPrividiumApiUp, assertZksyncOsIsUp } from './tools/service-assert';
 import { type SsoDeploymentResult, deploySsoContracts } from './tools/sso-deploy';
+import { setupPrivateInteropConfig } from './tools/private-interop-setup';
 import { setupThreeChainContracts } from './tools/three-chain-setup';
 
 const DEFAULT_NATIVE_TOKEN_VAULT_ADDRESS = '0x0000000000000000000000000000000000010004' as Address;
@@ -438,6 +439,34 @@ async function main() {
     authBaseUrl: chainC.authBaseUrl
   };
 
+  const privateInteropConfig = await setupPrivateInteropConfig({
+    rootPath,
+    executorPrivateKey,
+    invoicePaymentAddress,
+    chainA: {
+      key: 'a',
+      label: 'A',
+      rpcUrl: chainA.rpcUrl,
+      chainId: chainA.chainId,
+      authToken: chainASession.adminAuthToken
+    },
+    chainB: {
+      key: 'b',
+      label: 'B',
+      rpcUrl: chainB.rpcUrl,
+      chainId: chainB.chainId,
+      authToken: chainBSession.adminAuthToken
+    },
+    chainC: {
+      key: 'c',
+      label: 'C',
+      rpcUrl: chainC.rpcUrl,
+      chainId: chainC.chainId,
+      authToken: chainCSession.adminAuthToken
+    },
+    publicChains: deployedChains
+  });
+
   const mergedConfig = mergeContractsConfig(existingContractsConfig, {
     metadata: {
       generatedAt: new Date().toISOString(),
@@ -455,13 +484,19 @@ async function main() {
         ? toAddress('L1_INTEROP_HANDLER', l1InteropHandler)
         : undefined,
       l2InteropCenter: l2InteropCenter
-    }
+    },
+    privateInterop: privateInteropConfig
   });
 
   writeContractsConfig(contractsConfigPath, mergedConfig);
 
   const composeUpdate = updatePermissionApisCompose({
     composePath: path.join(rootPath, 'prividium-3chain-local', 'docker-compose.yml'),
+    bundlerComposePath: path.join(
+      rootPath,
+      'prividium-3chain-local',
+      'docker-compose-deps.yml'
+    ),
     services: [
       {
         serviceName: 'permissions-api-l2a',
@@ -510,6 +545,17 @@ async function main() {
       .map(([key, value]) => `${key.toUpperCase()}=${value?.address ?? 'n/a'}`)
       .join(', ')}`
   );
+  if (privateInteropConfig?.enabled) {
+    console.log(
+      `  Private chain C payment tokens: ${Object.entries(privateInteropConfig.paymentTokens ?? {})
+        .flatMap(([sourceKey, tokens]) =>
+          Object.entries(tokens ?? {}).map(
+            ([tokenKey, value]) => `${sourceKey.toUpperCase()}:${tokenKey.toUpperCase()}=${value?.address ?? 'n/a'}`
+          )
+        )
+        .join(', ')}`
+    );
+  }
   console.log('\nRestart command for permission APIs (A/B):');
   console.log(`  ${composeUpdate.restartCommand}`);
 

@@ -8,7 +8,7 @@ import {
   toHex
 } from 'viem';
 
-import { ssoContracts } from './constants';
+import { getSsoContracts, type SsoChainKey, type SsoContractsConfig } from './constants';
 import { assertPasskeyMatchesAccount, savePasskeyCredentials } from './passkeys';
 import { assertPasskeyUserOpSignatureValid, signUserOpWithPasskey } from './signUserOpWithPasskey';
 import { submitUserOpWithFallback } from './submitUserOpWithFallback';
@@ -39,11 +39,16 @@ export async function sendTxWithPasskey(
     contractAddress: `0x${string}`;
     nonce: number;
     calldata: `0x${string}`;
-  }) => Promise<{ message: string; activeUntil: string }>
+  }) => Promise<{ message: string; activeUntil: string }>,
+  options?: {
+    chainKey?: SsoChainKey;
+    ssoContracts?: SsoContractsConfig;
+  }
 ) {
   if (!readClient) {
     throw new Error('Authenticated RPC client required to send transactions.');
   }
+  const resolvedSsoContracts = options?.ssoContracts ?? getSsoContracts(options?.chainKey);
   // Create UserOperation for ETH transfer
   // Use ERC-7579 execute(bytes32 mode, bytes executionData) format
   const modeCode = pad('0x01', { dir: 'right', size: 32 }); // simple batch execute
@@ -108,7 +113,7 @@ export async function sendTxWithPasskey(
   ];
 
   const nonce = await readClient.readContract({
-    address: ssoContracts.entryPoint,
+    address: resolvedSsoContracts.entryPoint,
     abi: ENTRYPOINT_ABI,
     functionName: 'getNonce',
     args: [accountAddress, 0n],
@@ -144,7 +149,7 @@ export async function sendTxWithPasskey(
 
   // Derive the hash exactly as EntryPoint computes it on-chain.
   const userOpHash = (await readClient.readContract({
-    address: ssoContracts.entryPoint,
+    address: resolvedSsoContracts.entryPoint,
     abi: ENTRYPOINT_ABI,
     functionName: 'getUserOpHash',
     args: [packedUserOp],
@@ -155,7 +160,7 @@ export async function sendTxWithPasskey(
   const signed = await signUserOpWithPasskey({
     hash: userOpHash,
     credentialId: passkeyCredentials.credentialId,
-    validatorAddress: ssoContracts.webauthnValidator,
+    validatorAddress: resolvedSsoContracts.webauthnValidator,
     rpId: window.location.hostname,
     origin: window.location.origin
   });
@@ -168,7 +173,7 @@ export async function sendTxWithPasskey(
     };
     await assertPasskeyMatchesAccount({
       client: readClient,
-      webauthnValidator: ssoContracts.webauthnValidator,
+      webauthnValidator: resolvedSsoContracts.webauthnValidator,
       accountAddress,
       passkeyCredentials: refreshedCredentials
     });
@@ -176,7 +181,7 @@ export async function sendTxWithPasskey(
   }
   await assertPasskeyUserOpSignatureValid({
     client: readClient,
-    validatorAddress: ssoContracts.webauthnValidator,
+    validatorAddress: resolvedSsoContracts.webauthnValidator,
     accountAddress,
     userOpHash,
     signature: packedUserOp.signature
@@ -207,7 +212,7 @@ export async function sendTxWithPasskey(
   const submission = await submitUserOpWithFallback({
     readClient,
     chainId: Number(readClient.chain?.id ?? 0),
-    entryPoint: ssoContracts.entryPoint,
+    entryPoint: resolvedSsoContracts.entryPoint,
     userOp: userOpForBundler
   });
   const transactionHash = submission.txHash;

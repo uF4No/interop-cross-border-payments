@@ -6,6 +6,7 @@ import {
   concat,
   concatHex,
   createPublicClient,
+  decodeEventLog,
   defineChain,
   encodeAbiParameters,
   encodeFunctionData,
@@ -18,6 +19,7 @@ import {
 } from 'viem';
 import { computed } from 'vue';
 
+import type { InvoicePaymentOption } from '@/types/invoices';
 import type { CreateInvoiceSubmitPayload } from '@/utils/invoiceForm';
 import {
   assertPasskeyMatchesAccount,
@@ -35,6 +37,7 @@ import {
   submitUserOpWithFallback
 } from '@/utils/sso/submitUserOpWithFallback';
 import type { PasskeyCredential } from '@/utils/sso/types';
+import { type InteropMode, useInteropMode } from './useInteropMode';
 import { usePrividium } from './usePrividium';
 import { useRpcClient } from './useRpcClient';
 
@@ -59,10 +62,13 @@ type GasOptions = {
 };
 
 type SourceInteropConfig = {
+  mode: InteropMode;
   chainKey: SourceChainKey;
   chainId: number;
+  rpcUrl?: string;
   nativeTokenVault?: Address;
   interopCenter?: Address;
+  assetRouter?: Address;
   entryPoint?: Address;
   webauthnValidator?: Address;
   tokenAddresses: Record<BillingTokenSymbol, Address | undefined>;
@@ -76,6 +82,10 @@ type DestinationInteropConfig = {
   relayAddress?: Address;
   interopHandler?: Address;
   tokenAddresses: Record<BillingTokenSymbol, Address | undefined>;
+  privatePaymentTokenAddresses: Record<
+    SourceChainKey,
+    Record<BillingTokenSymbol, Address | undefined>
+  >;
 };
 
 type SendCreateInvoiceResult = {
@@ -137,18 +147,28 @@ type ReadDestinationTokenBalancePayload = {
 };
 
 type ResolvedInteropSession = {
+  mode: InteropMode;
   rpcClient: PublicClient;
   sourceChainId: number;
   sourceChainKey: SourceChainKey;
+  sourceRpcUrl?: string;
   interopCenter: Address;
   entryPoint: Address;
   webauthnValidator: Address;
   destinationChainId: number;
   destinationInvoicePayment: Address;
-  destinationRelayAddress: Address;
+  destinationRelayAddress?: Address;
   savedAccount: Address;
   savedPasskey: PasskeyCredential;
 };
+
+type PayFundingStage =
+  | 'approve-source-vault'
+  | 'prepare-funding-bundle'
+  | 'submit-funding-bundle'
+  | 'prepare-settlement-bundle'
+  | 'submit-settlement-bundle'
+  | 'submit-create-bundle';
 
 type DestinationCallStarter = {
   to: Address;
@@ -157,6 +177,7 @@ type DestinationCallStarter = {
 };
 
 type PayInvoiceContext = {
+  mode: InteropMode;
   paymentAmount: bigint;
   paymentToken: Address;
   payerRefundAddress: Address;
@@ -176,15 +197,22 @@ const L2_ASSET_ROUTER_ADDRESS = '0x0000000000000000000000000000000000010003' as 
 const L2_INTEROP_HANDLER_ADDRESS = '0x000000000000000000000000000000000001000d' as Address;
 const L2_NATIVE_TOKEN_VAULT_ADDRESS = '0x0000000000000000000000000000000000010004' as Address;
 const NEW_ENCODING_VERSION = '0x01' as Hex;
-const INDIRECT_CALL_ATTRIBUTE_SELECTOR = '0xc8496ea7' as Hex;
-const SHADOW_ACCOUNT_ATTRIBUTE_SELECTOR = '0x3569f7f7' as Hex;
-const UNBUNDLER_ATTRIBUTE_SELECTOR = '0xb9c86698' as Hex;
 const LOCAL_INTEROP_RELAY_ADDRESS = '0x36615Cf349d7F6344891B1e7CA7C72883F5dc049' as Address;
 const MAX_UINT256 = (1n << 256n) - 1n;
+const ZERO_BYTES32 = `0x${'0'.repeat(64)}` as Hex;
+const PRIVATE_BUNDLE_STATUS_FULLY_EXECUTED = 2;
+const PRIVATE_BUNDLE_STATUS_UNBUNDLED = 3;
+const PRIVATE_BUNDLE_POLL_INTERVAL_MS = 3_000;
+const PRIVATE_BUNDLE_POLL_TIMEOUT_MS = 120_000;
 
 const interopCenterAbi = parseAbi([
   'function sendBundle(bytes _destinationChainId, (bytes to, bytes data, bytes[] callAttributes)[] _callStarters, bytes[] _bundleAttributes) payable returns (bytes32)',
   'event InteropBundleSent(bytes32 l2l1MsgHash, bytes32 interopBundleHash, (bytes1 version, uint256 sourceChainId, uint256 destinationChainId, bytes32 interopBundleSalt, (bytes1 version, bool shadowAccount, address to, address from, uint256 value, bytes data)[] calls, (bytes executionAddress, bytes unbundlerAddress) bundleAttributes) interopBundle)'
+]);
+
+const privateInteropCenterAbi = parseAbi([
+  'function sendBundle(bytes _destinationChainId, (bytes to, bytes data, bytes[] callAttributes)[] _callStarters, bytes[] _bundleAttributes) payable returns (bytes32)',
+  'event InteropBundleSent(bytes32 l2l1MsgHash, bytes32 interopBundleHash, (bytes1 version, uint256 sourceChainId, uint256 destinationChainId, bytes32 destinationBaseTokenAssetId, bytes32 interopBundleSalt, (bytes1 version, bool shadowAccount, address to, address from, uint256 value, bytes data)[] calls, (bytes executionAddress, bytes unbundlerAddress, bool useFixedFee) bundleAttributes) interopBundle)'
 ]);
 
 const invoicePaymentAbi = parseAbi([
@@ -206,7 +234,17 @@ const entryPointAbi = parseAbi([
 ]);
 
 const interopHandlerAbi = parseAbi([
-  'function getShadowAccountAddress(uint256 ownerChainId, address ownerAddress) view returns (address)'
+  'function getShadowAccountAddress(uint256 ownerChainId, address ownerAddress) view returns (address)',
+  'function bundleStatus(bytes32 bundleHash) view returns (uint8)'
+]);
+
+const privateNtvAbi = parseAbi(['function assetId(address token) view returns (bytes32)']);
+
+const interopAttributesAbi = parseAbi([
+  'function indirectCall(uint256)',
+  'function interopCallValue(uint256)',
+  'function unbundlerAddress(bytes)',
+  'function shadowAccount()'
 ]);
 
 function readAddress(...keys: string[]): Address | undefined {
@@ -276,21 +314,34 @@ function formatEvmV1AddressOnly(address: Address): Hex {
 }
 
 function indirectCallAttribute(messageValue: bigint): Hex {
-  return concatHex([
-    INDIRECT_CALL_ATTRIBUTE_SELECTOR,
-    encodeAbiParameters([{ type: 'uint256' }], [messageValue])
-  ]);
+  return encodeFunctionData({
+    abi: interopAttributesAbi,
+    functionName: 'indirectCall',
+    args: [messageValue]
+  });
+}
+
+function interopCallValueAttribute(value: bigint): Hex {
+  return encodeFunctionData({
+    abi: interopAttributesAbi,
+    functionName: 'interopCallValue',
+    args: [value]
+  });
 }
 
 function unbundlerAddressAttribute(unbundler: Address): Hex {
-  return concatHex([
-    UNBUNDLER_ATTRIBUTE_SELECTOR,
-    encodeAbiParameters([{ type: 'bytes' }], [formatEvmV1AddressOnly(unbundler)])
-  ]);
+  return encodeFunctionData({
+    abi: interopAttributesAbi,
+    functionName: 'unbundlerAddress',
+    args: [formatEvmV1AddressOnly(unbundler)]
+  });
 }
 
 function shadowAccountAttribute(): Hex {
-  return SHADOW_ACCOUNT_ATTRIBUTE_SELECTOR;
+  return encodeFunctionData({
+    abi: interopAttributesAbi,
+    functionName: 'shadowAccount'
+  });
 }
 
 function readInteropRelayAddress(): Address | undefined {
@@ -374,12 +425,18 @@ function resolveSourceChainKey(chainId: number): SourceChainKey {
   return 'A';
 }
 
-function getSourceInteropConfig(chainId: number): SourceInteropConfig {
+function getPublicSourceInteropConfig(chainId: number): SourceInteropConfig {
   const chainKey = resolveSourceChainKey(chainId);
 
   return {
+    mode: 'public',
     chainKey,
     chainId,
+    rpcUrl: readUrl(
+      `VITE_CHAIN_${chainKey}_RPC_URL`,
+      `VITE_PRIVIDIUM_CHAIN_${chainKey}_RPC_URL`,
+      'VITE_PRIVIDIUM_RPC_URL'
+    ),
     nativeTokenVault:
       readAddress(`VITE_CHAIN_${chainKey}_NATIVE_TOKEN_VAULT`) ?? L2_NATIVE_TOKEN_VAULT_ADDRESS,
     interopCenter: readAddress(`VITE_CHAIN_${chainKey}_INTEROP_CENTER`),
@@ -406,7 +463,40 @@ function getSourceInteropConfig(chainId: number): SourceInteropConfig {
   };
 }
 
-function getDestinationInteropConfig(): DestinationInteropConfig {
+function getPrivateSourceInteropConfig(chainId: number): SourceInteropConfig {
+  const publicConfig = getPublicSourceInteropConfig(chainId);
+
+  return {
+    ...publicConfig,
+    mode: 'private',
+    rpcUrl:
+      readUrl(`VITE_PRIVATE_CHAIN_${publicConfig.chainKey}_RPC_URL`) ?? publicConfig.rpcUrl,
+    nativeTokenVault:
+      readAddress(`VITE_PRIVATE_CHAIN_${publicConfig.chainKey}_NATIVE_TOKEN_VAULT`) ??
+      publicConfig.nativeTokenVault,
+    interopCenter:
+      readAddress(`VITE_PRIVATE_CHAIN_${publicConfig.chainKey}_INTEROP_CENTER`) ??
+      publicConfig.interopCenter,
+    assetRouter: readAddress(`VITE_PRIVATE_CHAIN_${publicConfig.chainKey}_ASSET_ROUTER`)
+  };
+}
+
+function readPrivateDestinationPaymentTokens(): DestinationInteropConfig['privatePaymentTokenAddresses'] {
+  return {
+    A: {
+      USDC: readAddress('VITE_PRIVATE_TOKEN_USDC_ADDRESS_CHAIN_C_FROM_A'),
+      SGD: readAddress('VITE_PRIVATE_TOKEN_SGD_ADDRESS_CHAIN_C_FROM_A'),
+      TBILL: readAddress('VITE_PRIVATE_TOKEN_TBILL_ADDRESS_CHAIN_C_FROM_A')
+    },
+    B: {
+      USDC: readAddress('VITE_PRIVATE_TOKEN_USDC_ADDRESS_CHAIN_C_FROM_B'),
+      SGD: readAddress('VITE_PRIVATE_TOKEN_SGD_ADDRESS_CHAIN_C_FROM_B'),
+      TBILL: readAddress('VITE_PRIVATE_TOKEN_TBILL_ADDRESS_CHAIN_C_FROM_B')
+    }
+  };
+}
+
+function getPublicDestinationInteropConfig(): DestinationInteropConfig {
   return {
     chainId: readChainId('VITE_CHAIN_C_CHAIN_ID'),
     rpcUrl: readUrl('VITE_CHAIN_C_RPC_URL'),
@@ -417,8 +507,32 @@ function getDestinationInteropConfig(): DestinationInteropConfig {
       USDC: readAddress('VITE_TOKEN_USDC_ADDRESS_CHAIN_C'),
       SGD: readAddress('VITE_TOKEN_SGD_ADDRESS_CHAIN_C'),
       TBILL: readAddress('VITE_TOKEN_TBILL_ADDRESS_CHAIN_C')
-    }
+    },
+    privatePaymentTokenAddresses: readPrivateDestinationPaymentTokens()
   };
+}
+
+function getPrivateDestinationInteropConfig(): DestinationInteropConfig {
+  const publicConfig = getPublicDestinationInteropConfig();
+
+  return {
+    ...publicConfig,
+    chainId: readChainId('VITE_PRIVATE_CHAIN_C_CHAIN_ID') ?? publicConfig.chainId,
+    rpcUrl: readUrl('VITE_PRIVATE_CHAIN_C_RPC_URL') ?? publicConfig.rpcUrl,
+    relayAddress: undefined,
+    interopHandler:
+      readAddress('VITE_PRIVATE_CHAIN_C_INTEROP_HANDLER') ?? publicConfig.interopHandler
+  };
+}
+
+function getSourceInteropConfig(chainId: number, mode: InteropMode): SourceInteropConfig {
+  return mode === 'private' ? getPrivateSourceInteropConfig(chainId) : getPublicSourceInteropConfig(chainId);
+}
+
+function getDestinationInteropConfig(mode: InteropMode): DestinationInteropConfig {
+  return mode === 'private'
+    ? getPrivateDestinationInteropConfig()
+    : getPublicDestinationInteropConfig();
 }
 
 function createReadOnlyClient(chainId: number, rpcUrl: string) {
@@ -477,7 +591,30 @@ async function assertSufficientUserOpPrefund(params: {
   );
 }
 
-function resolveConfiguredPaymentToken(
+function normalizeAddressKey(address: Address): string {
+  return address.toLowerCase();
+}
+
+function readPrivateSourceAssetId(
+  readClient: PublicClient,
+  source: SourceInteropConfig,
+  sourceToken: Address
+) {
+  if (!source.nativeTokenVault) {
+    throw new Error(
+      `Missing private native token vault address for source chain ${source.chainKey}.`
+    );
+  }
+
+  return readClient.readContract({
+    address: source.nativeTokenVault,
+    abi: privateNtvAbi,
+    functionName: 'assetId',
+    args: [sourceToken]
+  }) as Promise<Hex>;
+}
+
+function resolveConfiguredPublicPaymentToken(
   paymentToken: Address,
   source: SourceInteropConfig,
   destination: DestinationInteropConfig
@@ -512,6 +649,54 @@ function resolveConfiguredPaymentToken(
   };
 }
 
+function resolveConfiguredPrivatePaymentToken(
+  paymentToken: Address,
+  source: SourceInteropConfig,
+  destination: DestinationInteropConfig
+) {
+  const symbol = (
+    Object.entries(
+      destination.privatePaymentTokenAddresses[source.chainKey]
+    ) as Array<[BillingTokenSymbol, Address | undefined]>
+  ).find(
+    ([, tokenAddress]) =>
+      tokenAddress !== undefined && tokenAddress.toLowerCase() === paymentToken.toLowerCase()
+  )?.[0];
+
+  if (!symbol) {
+    throw new Error(
+      `Payment token ${paymentToken} is not configured for private settlement from source chain ${source.chainKey}.`
+    );
+  }
+
+  const sourceToken = source.tokenAddresses[symbol];
+  if (!sourceToken) {
+    throw new Error(`Missing source-chain ${symbol} token address for chain ${source.chainKey}.`);
+  }
+
+  return {
+    symbol,
+    sourceToken
+  };
+}
+
+function getAllowedDestinationPaymentTokens(
+  destination: DestinationInteropConfig,
+  sourceChainKey: SourceChainKey,
+  mode: InteropMode
+) {
+  const tokenAddresses =
+    mode === 'private'
+      ? destination.privatePaymentTokenAddresses[sourceChainKey]
+      : destination.tokenAddresses;
+
+  return new Set(
+    Object.values(tokenAddresses)
+      .filter((tokenAddress): tokenAddress is Address => tokenAddress !== undefined)
+      .map(normalizeAddressKey)
+  );
+}
+
 function buildTokenTransferCall(
   sourceAssetId: Hex,
   amount: bigint,
@@ -533,6 +718,29 @@ function buildTokenTransferCall(
   };
 }
 
+function buildPrivateTokenTransferCall(
+  sourceAssetId: Hex,
+  amount: bigint,
+  recipient: Address,
+  sourceToken: Address,
+  sourceAssetRouter: Address
+): DestinationCallStarter {
+  const burnData = encodeAbiParameters(
+    [{ type: 'uint256' }, { type: 'address' }, { type: 'address' }],
+    [amount, recipient, sourceToken]
+  );
+  const data = concatHex([
+    NEW_ENCODING_VERSION,
+    encodeAbiParameters([{ type: 'bytes32' }, { type: 'bytes' }], [sourceAssetId, burnData])
+  ]);
+
+  return {
+    to: sourceAssetRouter,
+    data,
+    callAttributes: [indirectCallAttribute(0n), interopCallValueAttribute(0n)]
+  };
+}
+
 async function sendTxWithPasskeyForChain(
   accountAddress: Address,
   passkeyCredentials: PasskeyCredential,
@@ -543,10 +751,17 @@ async function sendTxWithPasskeyForChain(
   }[],
   gasOptions: GasOptions,
   readClient: PublicClient,
-  sourceConfig: Required<Pick<SourceInteropConfig, 'chainId' | 'entryPoint' | 'webauthnValidator'>>,
+  sourceConfig: Required<
+    Pick<SourceInteropConfig, 'chainId' | 'entryPoint' | 'webauthnValidator'>
+  > &
+    Pick<SourceInteropConfig, 'rpcUrl'>,
   enableWalletToken?: WalletAuthorizer
 ): Promise<UserOpSubmissionResult> {
   const modeCode = pad('0x01', { dir: 'right', size: 32 });
+  const helperReadClient =
+    sourceConfig.rpcUrl && sourceConfig.rpcUrl.trim()
+      ? createReadOnlyClient(sourceConfig.chainId, sourceConfig.rpcUrl)
+      : readClient;
 
   const executionData = encodeAbiParameters(
     [
@@ -568,7 +783,7 @@ async function sendTxWithPasskeyForChain(
     encodeAbiParameters([{ type: 'bytes32' }, { type: 'bytes' }], [modeCode, executionData])
   ]);
 
-  const nonce = await readClient.readContract({
+  const nonce = await helperReadClient.readContract({
     address: sourceConfig.entryPoint,
     abi: entryPointAbi,
     functionName: 'getNonce',
@@ -579,7 +794,7 @@ async function sendTxWithPasskeyForChain(
   await assertSufficientUserOpPrefund({
     accountAddress,
     gasOptions,
-    readClient,
+    readClient: helperReadClient,
     entryPoint: sourceConfig.entryPoint,
     chainKey: resolveSourceChainKey(sourceConfig.chainId)
   });
@@ -611,7 +826,7 @@ async function sendTxWithPasskeyForChain(
     signature: '0x' as Hex
   };
 
-  const userOpHash = (await readClient.readContract({
+  const userOpHash = (await helperReadClient.readContract({
     address: sourceConfig.entryPoint,
     abi: entryPointAbi,
     functionName: 'getUserOpHash',
@@ -634,7 +849,7 @@ async function sendTxWithPasskeyForChain(
       credentialId: signed.credentialId
     };
     await assertPasskeyMatchesAccount({
-      client: readClient,
+      client: helperReadClient,
       webauthnValidator: sourceConfig.webauthnValidator,
       accountAddress,
       passkeyCredentials: refreshedCredentials
@@ -642,7 +857,7 @@ async function sendTxWithPasskeyForChain(
     savePasskeyCredentials(refreshedCredentials);
   }
   await assertPasskeyUserOpSignatureValid({
-    client: readClient,
+    client: helperReadClient,
     validatorAddress: sourceConfig.webauthnValidator,
     accountAddress,
     userOpHash,
@@ -671,11 +886,12 @@ async function sendTxWithPasskeyForChain(
     readClient,
     chainId: sourceConfig.chainId,
     entryPoint: sourceConfig.entryPoint,
-    userOp: userOpForBundler
+    userOp: userOpForBundler,
+    preferDirectHandleOps: true
   });
 }
 
-function buildSendBundleData(
+function buildPublicSendBundleData(
   destinationChainId: number,
   destinationRelayAddress: Address,
   callStarters: DestinationCallStarter[]
@@ -691,6 +907,25 @@ function buildSendBundleData(
         callAttributes: callStarter.callAttributes
       })),
       [unbundlerAddressAttribute(destinationRelayAddress)]
+    ]
+  });
+}
+
+function buildPrivateSendBundleData(
+  destinationChainId: number,
+  callStarters: DestinationCallStarter[]
+) {
+  return encodeFunctionData({
+    abi: privateInteropCenterAbi,
+    functionName: 'sendBundle',
+    args: [
+      formatEvmV1(BigInt(destinationChainId)),
+      callStarters.map((callStarter) => ({
+        to: formatEvmV1AddressOnly(callStarter.to),
+        data: callStarter.data,
+        callAttributes: callStarter.callAttributes
+      })),
+      []
     ]
   });
 }
@@ -719,7 +954,7 @@ async function resolveInteropSession(
   if (!destinationChainId || !destinationInvoicePayment) {
     throw new Error('Missing chain C destination config for InvoicePayment.');
   }
-  if (!destinationRelayAddress) {
+  if (resolvedSourceConfig.mode === 'public' && !destinationRelayAddress) {
     throw new Error(
       'Missing chain C interop relay address. Set VITE_INTEROP_RELAY_ADDRESS or VITE_CHAIN_C_INTEROP_RELAY_ADDRESS.'
     );
@@ -757,9 +992,11 @@ async function resolveInteropSession(
   });
 
   return {
+    mode: resolvedSourceConfig.mode,
     rpcClient,
     sourceChainId: resolvedSourceConfig.chainId,
     sourceChainKey: resolvedSourceConfig.chainKey,
+    sourceRpcUrl: resolvedSourceConfig.rpcUrl,
     interopCenter,
     entryPoint,
     webauthnValidator,
@@ -776,11 +1013,14 @@ async function submitInteropBundle(
   callStarters: DestinationCallStarter[],
   enableWalletToken?: WalletAuthorizer
 ) {
-  const sendBundleData = buildSendBundleData(
-    session.destinationChainId,
-    session.destinationRelayAddress,
-    callStarters
-  );
+  const sendBundleData =
+    session.mode === 'private'
+      ? buildPrivateSendBundleData(session.destinationChainId, callStarters)
+      : buildPublicSendBundleData(
+          session.destinationChainId,
+          session.destinationRelayAddress as Address,
+          callStarters
+        );
 
   return await sendTxWithPasskeyForChain(
     session.savedAccount,
@@ -794,13 +1034,53 @@ async function submitInteropBundle(
     ],
     buildGasOptions(),
     session.rpcClient,
-    {
-      chainId: session.sourceChainId,
-      entryPoint: session.entryPoint,
-      webauthnValidator: session.webauthnValidator
-    },
+        {
+          chainId: session.sourceChainId,
+          rpcUrl: session.sourceRpcUrl,
+          entryPoint: session.entryPoint,
+          webauthnValidator: session.webauthnValidator
+        },
     enableWalletToken
   );
+}
+
+async function readPrivateBundleHashFromReceipt(
+  readClient: PublicClient,
+  txHash: Hex
+): Promise<`0x${string}`> {
+  const receipt = await readClient.waitForTransactionReceipt({ hash: txHash as `0x${string}` });
+
+  for (const log of receipt.logs) {
+    try {
+      const decoded = decodeEventLog({
+        abi: privateInteropCenterAbi,
+        data: log.data,
+        topics: log.topics
+      });
+
+      if (decoded.eventName === 'InteropBundleSent') {
+        return decoded.args.interopBundleHash as `0x${string}`;
+      }
+    } catch {
+      // Ignore unrelated logs.
+    }
+  }
+
+  throw new Error(
+    `Source transaction ${txHash} did not emit a private InteropBundleSent event.`
+  );
+}
+
+async function resolveSubmissionBundleHash(
+  mode: InteropMode,
+  readClient: PublicClient,
+  submission: UserOpSubmissionResult
+) {
+  if (mode === 'private') {
+    return await readPrivateBundleHashFromReceipt(readClient, submission.txHash);
+  }
+
+  return submission.bundleHash as `0x${string}` | undefined;
 }
 
 async function resolvePayInvoiceContext(
@@ -843,11 +1123,35 @@ async function resolvePayInvoiceContext(
   }
 
   const paymentToken = getAddress(payload.paymentToken);
-  const { sourceToken, sourceAssetId, symbol } = resolveConfiguredPaymentToken(
-    paymentToken,
-    resolvedSourceConfig,
-    resolvedDestinationConfig
-  );
+  let symbol: BillingTokenSymbol;
+  let sourceToken: Address;
+  let sourceAssetId: Hex;
+
+  if (resolvedSourceConfig.mode === 'private') {
+    const resolvedPaymentToken = resolveConfiguredPrivatePaymentToken(
+      paymentToken,
+      resolvedSourceConfig,
+      resolvedDestinationConfig
+    );
+    symbol = resolvedPaymentToken.symbol;
+    sourceToken = resolvedPaymentToken.sourceToken;
+    sourceAssetId = await readPrivateSourceAssetId(rpcClient, resolvedSourceConfig, sourceToken);
+  } else {
+    const resolvedPaymentToken = resolveConfiguredPublicPaymentToken(
+      paymentToken,
+      resolvedSourceConfig,
+      resolvedDestinationConfig
+    );
+    symbol = resolvedPaymentToken.symbol;
+    sourceToken = resolvedPaymentToken.sourceToken;
+    sourceAssetId = resolvedPaymentToken.sourceAssetId;
+  }
+
+  if (sourceAssetId === ZERO_BYTES32) {
+    throw new Error(
+      `Private asset ID for ${symbol} on source chain ${resolvedSourceConfig.chainKey} is not registered in the private vault. Re-run setup and retry.`
+    );
+  }
 
   if (!resolvedSourceConfig.nativeTokenVault) {
     throw new Error(
@@ -882,6 +1186,7 @@ async function resolvePayInvoiceContext(
   })) as bigint;
 
   return {
+    mode: resolvedSourceConfig.mode,
     paymentAmount,
     paymentToken,
     payerRefundAddress,
@@ -900,20 +1205,128 @@ async function resolvePayInvoiceContext(
 export function useInteropInvoice() {
   const rpcClient = useRpcClient();
   const { enableWalletToken, getChain, refreshUserProfile, userWallets } = usePrividium();
+  const { mode: selectedMode } = useInteropMode();
 
-  const sourceConfig = computed(() => getSourceInteropConfig(Number(getChain().id)));
-  const destinationConfig = computed(() => getDestinationInteropConfig());
+  const refreshSessionRpcClient = (session: ResolvedInteropSession) => {
+    const nextClient = rpcClient.value;
+    if (nextClient) {
+      session.rpcClient = nextClient;
+    }
+  };
+
+  const wrapInteropStageError = (
+    stage: PayFundingStage,
+    error: unknown,
+    fallbackMessage: string
+  ): never => {
+    const message =
+      error instanceof Error && error.message.trim() ? error.message.trim() : fallbackMessage;
+
+    switch (stage) {
+      case 'submit-create-bundle':
+        throw new Error(`Failed while submitting the create-invoice bundle. ${message}`);
+      case 'approve-source-vault':
+        throw new Error(`Failed while approving the source vault. ${message}`);
+      case 'prepare-funding-bundle':
+        throw new Error(`Failed while preparing the public funding bundle. ${message}`);
+      case 'submit-funding-bundle':
+        throw new Error(`Failed while submitting the public funding bundle. ${message}`);
+      case 'prepare-settlement-bundle':
+        throw new Error(`Failed while preparing the settlement bundle. ${message}`);
+      case 'submit-settlement-bundle':
+        throw new Error(`Failed while submitting the settlement bundle. ${message}`);
+      default:
+        throw new Error(message);
+    }
+  };
+
+  const resolveMode = (mode?: InteropMode): InteropMode => mode ?? selectedMode.value;
+  const resolveSourceConfigForMode = (mode: InteropMode) =>
+    getSourceInteropConfig(Number(getChain().id), mode);
+  const resolveDestinationConfigForMode = (mode: InteropMode) => getDestinationInteropConfig(mode);
+
+  const sourceConfig = computed(() => resolveSourceConfigForMode(resolveMode()));
+  const destinationConfig = computed(() => resolveDestinationConfigForMode(resolveMode()));
+
+  const filterPaymentOptions = (
+    options: InvoicePaymentOption[],
+    mode?: InteropMode
+  ): InvoicePaymentOption[] => {
+    const activeMode = resolveMode(mode);
+    const resolvedSourceConfig = resolveSourceConfigForMode(activeMode);
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(activeMode);
+    const allowedTokens = getAllowedDestinationPaymentTokens(
+      resolvedDestinationConfig,
+      resolvedSourceConfig.chainKey,
+      activeMode
+    );
+
+    return options.filter((option) => {
+      if (!isAddress(option.token)) {
+        return false;
+      }
+
+      return allowedTokens.has(normalizeAddressKey(getAddress(option.token)));
+    });
+  };
+
+  const waitForBundleExecution = async (
+    bundleHash: `0x${string}` | undefined,
+    mode?: InteropMode
+  ): Promise<void> => {
+    const activeMode = resolveMode(mode);
+    if (activeMode !== 'private' || !bundleHash) {
+      return;
+    }
+
+    const resolvedDestinationConfig = resolveDestinationConfigForMode('private');
+    if (
+      !resolvedDestinationConfig.chainId ||
+      !resolvedDestinationConfig.rpcUrl ||
+      !resolvedDestinationConfig.interopHandler
+    ) {
+      throw new Error('Missing private chain C bundle-status configuration.');
+    }
+
+    const destinationClient = createReadOnlyClient(
+      resolvedDestinationConfig.chainId,
+      resolvedDestinationConfig.rpcUrl
+    );
+    const deadline = Date.now() + PRIVATE_BUNDLE_POLL_TIMEOUT_MS;
+
+    while (Date.now() < deadline) {
+      const status = (await destinationClient.readContract({
+        address: resolvedDestinationConfig.interopHandler,
+        abi: interopHandlerAbi,
+        functionName: 'bundleStatus',
+        args: [bundleHash]
+      })) as number;
+
+      if (status === PRIVATE_BUNDLE_STATUS_FULLY_EXECUTED) {
+        return;
+      }
+      if (status === PRIVATE_BUNDLE_STATUS_UNBUNDLED) {
+        throw new Error(`Private bundle ${bundleHash} was unbundled on chain C.`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, PRIVATE_BUNDLE_POLL_INTERVAL_MS));
+    }
+
+    throw new Error(`Timed out waiting for private bundle ${bundleHash} to execute on chain C.`);
+  };
 
   const sendCreateInvoiceBundle = async (
-    payload: CreateInvoiceSubmitPayload
+    payload: CreateInvoiceSubmitPayload,
+    mode?: InteropMode
   ): Promise<SendCreateInvoiceResult> => {
     const currentRpcClient = rpcClient.value;
     if (!currentRpcClient) {
       throw new Error('Authenticated RPC client not available.');
     }
 
-    const resolvedSourceConfig = sourceConfig.value;
-    const resolvedDestinationConfig = destinationConfig.value;
+    const activeMode = resolveMode(mode);
+    const resolvedSourceConfig = resolveSourceConfigForMode(activeMode);
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(activeMode);
     const destinationBillingToken =
       resolvedDestinationConfig.tokenAddresses[payload.billingTokenSymbol];
     await refreshUserProfile();
@@ -947,22 +1360,34 @@ export function useInteropInvoice() {
       ]
     });
 
-    const submission = await submitInteropBundle(
-      session,
-      [
-        {
-          to: session.destinationInvoicePayment,
-          data: createInvoiceData,
-          // InvoicePayment validates cross-chain creators via the deterministic shadow account.
-          callAttributes: [shadowAccountAttribute()]
-        }
-      ],
-      enableWalletToken as WalletAuthorizer
-    );
+    const submission = await (async () => {
+      try {
+        refreshSessionRpcClient(session);
+        return await submitInteropBundle(
+          session,
+          [
+            {
+              to: session.destinationInvoicePayment,
+              data: createInvoiceData,
+              // InvoicePayment validates cross-chain creators via the deterministic shadow account.
+              callAttributes: [shadowAccountAttribute()]
+            }
+          ],
+          enableWalletToken as WalletAuthorizer
+        );
+      } catch (error) {
+        return wrapInteropStageError(
+          'submit-create-bundle',
+          error,
+          'Create bundle submission failed.'
+        );
+      }
+    })();
+    const bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
 
     return {
       transactionHash: submission.txHash,
-      bundleHash: submission.bundleHash,
+      bundleHash,
       destinationBillingToken,
       sourceInteropCenter: session.interopCenter,
       destinationInvoicePayment: session.destinationInvoicePayment,
@@ -971,15 +1396,17 @@ export function useInteropInvoice() {
   };
 
   const sendFundPayInvoiceBundle = async (
-    payload: SendPayInvoicePayload
+    payload: SendPayInvoicePayload,
+    mode?: InteropMode
   ): Promise<FundPayInvoiceResult> => {
     const currentRpcClient = rpcClient.value;
     if (!currentRpcClient) {
       throw new Error('Authenticated RPC client not available.');
     }
 
-    const resolvedSourceConfig = sourceConfig.value;
-    const resolvedDestinationConfig = destinationConfig.value;
+    const activeMode = resolveMode(mode);
+    const resolvedSourceConfig = resolveSourceConfigForMode(activeMode);
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(activeMode);
     const nativeTokenVault = resolvedSourceConfig.nativeTokenVault;
     const {
       paymentAmount,
@@ -1039,38 +1466,89 @@ export function useInteropInvoice() {
         args: [nativeTokenVault, requiredFundingAmount]
       });
 
-      const approvalSubmission = await sendTxWithPasskeyForChain(
-        session.savedAccount,
-        session.savedPasskey,
-        [
+      const approvalSubmission = await (async () => {
+        try {
+          refreshSessionRpcClient(session);
+          return await sendTxWithPasskeyForChain(
+            session.savedAccount,
+            session.savedPasskey,
+            [
+              {
+                to: sourceToken,
+                value: 0n,
+                data: approveSourceVaultData
+              }
+            ],
+            buildGasOptions(),
+            session.rpcClient,
           {
-            to: sourceToken,
-            value: 0n,
-            data: approveSourceVaultData
-          }
-        ],
-        buildGasOptions(),
-        session.rpcClient,
-        {
-          chainId: session.sourceChainId,
-          entryPoint: session.entryPoint,
-          webauthnValidator: session.webauthnValidator
-        },
-        enableWalletToken as WalletAuthorizer
-      );
+            chainId: session.sourceChainId,
+            rpcUrl: session.sourceRpcUrl,
+            entryPoint: session.entryPoint,
+            webauthnValidator: session.webauthnValidator
+          },
+            enableWalletToken as WalletAuthorizer
+          );
+        } catch (error) {
+          return wrapInteropStageError(
+            'approve-source-vault',
+            error,
+            'Source-vault approval failed.'
+          );
+        }
+      })();
       approvalTransactionHash = approvalSubmission.txHash;
     }
 
     let transactionHash: `0x${string}` | undefined;
     let bundleHash: `0x${string}` | undefined;
     if (requiredFundingAmount > 0n) {
-      const submission = await submitInteropBundle(
-        session,
-        [buildTokenTransferCall(sourceAssetId, requiredFundingAmount, shadowAccount)],
-        enableWalletToken as WalletAuthorizer
-      );
+      if (activeMode === 'private' && !resolvedSourceConfig.assetRouter) {
+        throw new Error(
+          `Missing private asset router address for source chain ${resolvedSourceConfig.chainKey}.`
+        );
+      }
+
+      const fundingCallStarter = (() => {
+        try {
+          return (
+          activeMode === 'private'
+            ? buildPrivateTokenTransferCall(
+                sourceAssetId,
+                requiredFundingAmount,
+                shadowAccount,
+                sourceToken,
+                resolvedSourceConfig.assetRouter as Address
+              )
+            : buildTokenTransferCall(sourceAssetId, requiredFundingAmount, shadowAccount)
+          );
+        } catch (error) {
+          return wrapInteropStageError(
+            'prepare-funding-bundle',
+            error,
+            'Funding bundle preparation failed.'
+          );
+        }
+      })();
+
+      const submission = await (async () => {
+        try {
+          refreshSessionRpcClient(session);
+          return await submitInteropBundle(
+            session,
+            [fundingCallStarter],
+            enableWalletToken as WalletAuthorizer
+          );
+        } catch (error) {
+          return wrapInteropStageError(
+            'submit-funding-bundle',
+            error,
+            'Funding bundle submission failed.'
+          );
+        }
+      })();
       transactionHash = submission.txHash;
-      bundleHash = submission.bundleHash;
+      bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
     }
 
     return {
@@ -1090,15 +1568,17 @@ export function useInteropInvoice() {
   };
 
   const sendSettlePayInvoiceBundle = async (
-    payload: SendPayInvoicePayload
+    payload: SendPayInvoicePayload,
+    mode?: InteropMode
   ): Promise<SettlePayInvoiceResult> => {
     const currentRpcClient = rpcClient.value;
     if (!currentRpcClient) {
       throw new Error('Authenticated RPC client not available.');
     }
 
-    const resolvedSourceConfig = sourceConfig.value;
-    const resolvedDestinationConfig = destinationConfig.value;
+    const activeMode = resolveMode(mode);
+    const resolvedSourceConfig = resolveSourceConfigForMode(activeMode);
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(activeMode);
     const invoiceId = payload.invoiceId.trim();
     const { paymentAmount, paymentToken, session, shadowAccount, destinationBalance } =
       await resolvePayInvoiceContext(
@@ -1127,9 +1607,9 @@ export function useInteropInvoice() {
       args: [BigInt(invoiceId), paymentToken]
     });
 
-    const submission = await submitInteropBundle(
-      session,
-      [
+    const settlementCallStarters: DestinationCallStarter[] = [];
+    try {
+      settlementCallStarters.push(
         {
           to: paymentToken,
           data: approvePaymentData,
@@ -1140,13 +1620,36 @@ export function useInteropInvoice() {
           data: payInvoiceData,
           callAttributes: [shadowAccountAttribute()]
         }
-      ],
-      enableWalletToken as WalletAuthorizer
-    );
+      );
+    } catch (error) {
+      wrapInteropStageError(
+        'prepare-settlement-bundle',
+        error,
+        'Settlement bundle preparation failed.'
+      );
+    }
+
+    const submission = await (async () => {
+      try {
+        refreshSessionRpcClient(session);
+        return await submitInteropBundle(
+          session,
+          settlementCallStarters,
+          enableWalletToken as WalletAuthorizer
+        );
+      } catch (error) {
+        return wrapInteropStageError(
+          'submit-settlement-bundle',
+          error,
+          'Settlement bundle submission failed.'
+        );
+      }
+    })();
+    const bundleHash = await resolveSubmissionBundleHash(activeMode, currentRpcClient, submission);
 
     return {
       transactionHash: submission.txHash,
-      bundleHash: submission.bundleHash,
+      bundleHash,
       paymentToken,
       shadowAccount,
       sourceInteropCenter: session.interopCenter,
@@ -1156,9 +1659,10 @@ export function useInteropInvoice() {
   };
 
   const readDestinationTokenBalance = async (
-    payload: ReadDestinationTokenBalancePayload
+    payload: ReadDestinationTokenBalancePayload,
+    mode?: InteropMode
   ): Promise<bigint> => {
-    const resolvedDestinationConfig = destinationConfig.value;
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(resolveMode(mode));
     if (!resolvedDestinationConfig.chainId || !resolvedDestinationConfig.rpcUrl) {
       throw new Error('Missing chain C destination config for token balance reads.');
     }
@@ -1177,9 +1681,10 @@ export function useInteropInvoice() {
   };
 
   const readPayInvoicePreflight = async (
-    payload: ReadPayInvoicePreflightPayload
+    payload: ReadPayInvoicePreflightPayload,
+    mode?: InteropMode
   ): Promise<ReadPayInvoicePreflightResult> => {
-    const resolvedDestinationConfig = destinationConfig.value;
+    const resolvedDestinationConfig = resolveDestinationConfigForMode(resolveMode(mode));
 
     if (
       !resolvedDestinationConfig.chainId ||
@@ -1216,6 +1721,8 @@ export function useInteropInvoice() {
   return {
     sourceConfig,
     destinationConfig,
+    filterPaymentOptions,
+    waitForBundleExecution,
     readDestinationTokenBalance,
     readPayInvoicePreflight,
     sendCreateInvoiceBundle,

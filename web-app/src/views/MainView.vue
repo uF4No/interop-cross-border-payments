@@ -288,7 +288,7 @@
 
             <div class="space-y-3">
               <div
-                v-for="(step, index) in interopStepsForFlow(tx.interop.flow)"
+                v-for="(step, index) in interopStepsForFlow(tx.interop.flow, tx.interop.mode)"
                 :key="`${tx.id}-${step.id}`"
                 class="flex items-start gap-3"
               >
@@ -375,6 +375,7 @@ import CreateInvoiceModal from '../components/CreateInvoiceModal.vue';
 import InvoiceTableCard from '../components/InvoiceTableCard.vue';
 import PayInvoiceModal from '../components/PayInvoiceModal.vue';
 import { useActiveChainBalances } from '../composables/useActiveChainBalances';
+import { type InteropMode, useInteropMode } from '../composables/useInteropMode';
 import { useInteropInvoice } from '../composables/useInteropInvoice';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
@@ -410,6 +411,7 @@ type InteropStepDefinition = {
 };
 type InteropStepState = 'upcoming' | 'current' | 'complete' | 'failed';
 type ActivityInteropEntry = {
+  mode: InteropMode;
   flow: InteropFlow;
   status: InteropStatus;
   currentStepId: InteropStepId | null;
@@ -444,14 +446,12 @@ type InvoiceDraftSummary = {
   invoiceId?: string;
 };
 
-type PaymentOptionSymbol = 'USDC' | 'SGD' | 'TBILL';
-
 type TokenFundingJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
 type InvoiceTableCardExposed = {
   refreshInvoices: () => Promise<void>;
 };
 
-const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+const PUBLIC_CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   {
     id: 'create-validate',
     label: 'Validate payment request',
@@ -475,7 +475,18 @@ const CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
     description: 'Detect the new payment request on chain C. Creation moves no ERC20 tokens.'
   }
 ] as const;
-const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+const PRIVATE_CREATE_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+  PUBLIC_CREATE_INTEROP_STEPS[0],
+  PUBLIC_CREATE_INTEROP_STEPS[1],
+  {
+    id: 'create-relay',
+    label: 'Wait for private execution',
+    description:
+      'Wait for the private executor to execute the createInvoice bundle on chain C before checking for the new payment request.'
+  },
+  PUBLIC_CREATE_INTEROP_STEPS[3]
+] as const;
+const PUBLIC_PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
   {
     id: 'pay-validate',
     label: 'Validate payment route',
@@ -507,6 +518,23 @@ const PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
       'Wait for chain C to mark the payment request paid. Any cross-chain creator payout happens later in the backend.'
   }
 ] as const;
+const PRIVATE_PAY_INTEROP_STEPS: readonly InteropStepDefinition[] = [
+  PUBLIC_PAY_INTEROP_STEPS[0],
+  PUBLIC_PAY_INTEROP_STEPS[1],
+  {
+    id: 'pay-fund',
+    label: 'Fund payer shadow account',
+    description:
+      'Privately bridge the missing payment token amount into the deterministic chain C shadow account, then wait for private execution and destination balance confirmation.'
+  },
+  {
+    id: 'pay-settle',
+    label: 'Approve and pay on chain C',
+    description:
+      'Send the private settlement bundle so the payer shadow account approves the token and calls InvoicePayment.payInvoice(...) on chain C.'
+  },
+  PUBLIC_PAY_INTEROP_STEPS[4]
+] as const;
 const INVOICE_POLL_INTERVAL_MS = 10000;
 const INVOICE_POLL_TIMEOUT_MS = 90000;
 const SHADOW_ACCOUNT_POLL_INTERVAL_MS = 3000;
@@ -514,19 +542,20 @@ const SHADOW_ACCOUNT_POLL_TIMEOUT_MS = 90000;
 const FUND_TOKENS_POLL_INTERVAL_MS = 15000;
 const FUND_TOKENS_TIMEOUT_MS = 300000;
 const MAX_ERROR_MESSAGE_LENGTH = 220;
-const PAYMENT_OPTION_SYMBOLS: readonly PaymentOptionSymbol[] = ['USDC', 'SGD', 'TBILL'];
-
 const router = useRouter();
 const { isAuthenticated, getChain, selectedChainKey } = usePrividium();
+const { mode: interopMode } = useInteropMode();
 const { account: ssoAccount } = useSsoAccount();
 const {
   sourceConfig,
   destinationConfig,
+  filterPaymentOptions,
   readDestinationTokenBalance,
   readPayInvoicePreflight,
   sendCreateInvoiceBundle,
   sendFundPayInvoiceBundle,
-  sendSettlePayInvoiceBundle
+  sendSettlePayInvoiceBundle,
+  waitForBundleExecution
 } = useInteropInvoice();
 const {
   rows: balanceRows,
@@ -554,6 +583,7 @@ const transactions = ref<ActivityEntry[]>([]);
 const invoiceTableCardRef = ref<InvoiceTableCardExposed | null>(null);
 const errorMessage = ref('');
 const interopFlow = ref<InteropFlow | null>(null);
+const interopActivityMode = ref<InteropMode>('public');
 const interopStatus = ref<InteropStatus>('idle');
 const interopCurrentStepId = ref<InteropStepId | null>(null);
 const interopStepDetails = ref<Partial<Record<InteropStepId, string>>>({});
@@ -564,6 +594,7 @@ const interopBundleHash = ref('');
 const interopInvoiceId = ref('');
 const processingInvoiceId = ref('');
 const payInvoiceTarget = ref<InvoiceRecord | null>(null);
+const payInvoiceMode = ref<InteropMode>('public');
 const payInvoiceOptions = ref<InvoicePaymentOption[]>([]);
 const payInvoiceOptionsLoading = ref(false);
 const payInvoiceOptionsError = ref('');
@@ -626,9 +657,6 @@ const payInvoiceDisableReason = computed(() => {
 });
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
-
-const isPaymentOptionSymbol = (value: unknown): value is PaymentOptionSymbol =>
-  typeof value === 'string' && PAYMENT_OPTION_SYMBOLS.includes(value as PaymentOptionSymbol);
 
 const toStringValue = (value: unknown): string | null => {
   if (typeof value === 'string') return value;
@@ -780,12 +808,25 @@ const copyContractAddress = () => {
   }, 2000);
 };
 
-const interopStepsForFlow = (flow: InteropFlow) =>
-  flow === 'pay' ? PAY_INTEROP_STEPS : CREATE_INTEROP_STEPS;
-
-const interopSummaryForFlow = (flow: InteropFlow) => {
+const interopStepsForFlow = (flow: InteropFlow, mode: InteropMode) => {
   if (flow === 'pay') {
+    return mode === 'private' ? PRIVATE_PAY_INTEROP_STEPS : PUBLIC_PAY_INTEROP_STEPS;
+  }
+
+  return mode === 'private' ? PRIVATE_CREATE_INTEROP_STEPS : PUBLIC_CREATE_INTEROP_STEPS;
+};
+
+const interopSummaryForFlow = (flow: InteropFlow, mode: InteropMode) => {
+  if (flow === 'pay') {
+    if (mode === 'private') {
+      return 'Payment can require up to 3 user-signed transactions: source approval, private funding bundle, and private settlement bundle. Destination execution happens later through the private executor on chain C.';
+    }
+
     return 'Payment can require up to 3 user-signed transactions: source approval, funding bundle, and settlement bundle. Cross-chain creator payout is backend-driven and not tracked here.';
+  }
+
+  if (mode === 'private') {
+    return 'Invoice creation uses 1 private interop bundle from chain A or B to chain C. The source transaction yields the bundle hash and the private executor later runs destination execution.';
   }
 
   return 'Invoice creation uses 1 interop bundle from chain A or B to chain C and does not move ERC20 tokens.';
@@ -818,19 +859,24 @@ const setInteropStepDetail = (stepId: InteropStepId, detail: string) => {
   };
 };
 
-const syncTransactionInterop = (id: string, flow = interopFlow.value) => {
+const syncTransactionInterop = (
+  id: string,
+  flow = interopFlow.value,
+  mode = interopActivityMode.value
+) => {
   if (!flow) return;
 
   const tx = transactions.value.find((entry) => entry.id === id);
   if (!tx) return;
 
   tx.interop = {
+    mode,
     flow,
     status: interopStatus.value,
     currentStepId: interopCurrentStepId.value,
     stepDetails: { ...interopStepDetails.value },
     message: interopMessage.value,
-    summary: interopSummaryForFlow(flow),
+    summary: interopSummaryForFlow(flow, mode),
     sourceTxHash: interopSourceTxHash.value,
     bundleHash: interopBundleHash.value,
     invoiceId: interopInvoiceId.value,
@@ -877,7 +923,7 @@ const activityStepState = (interop: ActivityInteropEntry, key: InteropStepId): I
   if (interop.status === 'idle') {
     return 'upcoming';
   }
-  const steps = interopStepsForFlow(interop.flow);
+  const steps = interopStepsForFlow(interop.flow, interop.mode);
   const currentIndex = steps.findIndex((step) => step.id === interop.currentStepId);
   const stepIndex = steps.findIndex((step) => step.id === key);
 
@@ -1130,14 +1176,6 @@ const updateTransaction = (
   if (updates.detail) tx.detail = updates.detail;
 };
 
-const sourceChainSupportsPaymentSymbol = (symbol: string): symbol is PaymentOptionSymbol => {
-  if (!isPaymentOptionSymbol(symbol)) {
-    return false;
-  }
-
-  return Boolean(sourceConfig.value.tokenAddresses[symbol]);
-};
-
 const fetchInvoicePaymentOptions = async (
   invoice: InvoiceRecord
 ): Promise<InvoicePaymentOptionsResponseObject> => {
@@ -1294,7 +1332,8 @@ const waitForInvoiceStatus = async (invoiceId: string, targetStatus: string) => 
 const waitForShadowAccountBalance = async (
   token: `0x${string}`,
   shadowAccount: `0x${string}`,
-  targetBalance: bigint
+  targetBalance: bigint,
+  mode: InteropMode
 ) => {
   const deadline = Date.now() + SHADOW_ACCOUNT_POLL_TIMEOUT_MS;
   let lastReadError = '';
@@ -1304,7 +1343,7 @@ const waitForShadowAccountBalance = async (
       const balance = await readDestinationTokenBalance({
         token,
         account: shadowAccount
-      });
+      }, mode);
 
       if (balance >= targetBalance) {
         return balance;
@@ -1329,12 +1368,14 @@ const waitForShadowAccountBalance = async (
 };
 
 const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) => {
+  const transactionMode = interopMode.value;
   errorMessage.value = '';
   interopError.value = '';
   processingInvoiceId.value = '';
   createInvoiceBannerTone.value = 'info';
   createInvoiceBanner.value = 'Validating payment request before cross-border submission.';
   interopFlow.value = 'create';
+  interopActivityMode.value = transactionMode;
   interopStepDetails.value = {};
   setInteropProgress(
     'create',
@@ -1362,7 +1403,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     'Preparing bundle...',
     `Validating ${payload.billingTokenSymbol} payment request for chain C.`
   );
-  syncTransactionInterop(txId, 'create');
+  syncTransactionInterop(txId, 'create', transactionMode);
 
   let baselineIds = new Set<string>();
 
@@ -1385,14 +1426,16 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
       hash: 'Authorizing passkey...',
       detail: `Authorizing ${sourceChainLabel.value} wallet session.`
     });
-    syncTransactionInterop(txId, 'create');
+    syncTransactionInterop(txId, 'create', transactionMode);
 
-    const result = await sendCreateInvoiceBundle(payload);
+    const result = await sendCreateInvoiceBundle(payload, transactionMode);
 
     interopSourceTxHash.value = result.transactionHash;
     interopBundleHash.value = result.bundleHash ?? '';
     createInvoiceBanner.value =
-      'Source transaction confirmed. Waiting for the payment request to appear on chain C.';
+      transactionMode === 'private'
+        ? 'Source transaction confirmed. Waiting for private execution on chain C.'
+        : 'Source transaction confirmed. Waiting for the payment request to appear on chain C.';
     setInteropStepDetail(
       'create-submit',
       result.bundleHash
@@ -1402,12 +1445,18 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     setInteropProgress(
       'create',
       'create-relay',
-      'Source transaction confirmed. Waiting for L1 finalization and relay execution on chain C.',
-      result.bundleHash
-        ? `Bundle ${truncateHash(result.bundleHash)} was submitted. The backend relayer still needs to finalize the message and the interop relay still needs to execute it on chain C.`
-        : 'Waiting for relayer finalization and chain C execution.'
+      transactionMode === 'private'
+        ? 'Source transaction confirmed. Waiting for the private executor to execute the bundle on chain C.'
+        : 'Source transaction confirmed. Waiting for L1 finalization and relay execution on chain C.',
+      transactionMode === 'private'
+        ? result.bundleHash
+          ? `Bundle ${truncateHash(result.bundleHash)} was submitted. Waiting for the private executor to execute it on chain C before checking for the invoice.`
+          : 'Waiting for the private executor to execute the destination bundle on chain C.'
+        : result.bundleHash
+          ? `Bundle ${truncateHash(result.bundleHash)} was submitted. The backend relayer still needs to finalize the message and the interop relay still needs to execute it on chain C.`
+          : 'Waiting for relayer finalization and chain C execution.'
     );
-    syncTransactionInterop(txId, 'create');
+    syncTransactionInterop(txId, 'create', transactionMode);
 
     lastInvoiceDraft.value = {
       ...(lastInvoiceDraft.value ?? {
@@ -1424,10 +1473,28 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
 
     updateTransaction(txId, {
       hash: result.transactionHash,
-      detail: result.bundleHash
-        ? `Bundle ${truncateHash(result.bundleHash)} submitted. Waiting for chain C execution.`
-        : 'Source transaction confirmed. Waiting for chain C execution.'
+      detail:
+        transactionMode === 'private'
+          ? result.bundleHash
+            ? `Private bundle ${truncateHash(result.bundleHash)} submitted. Waiting for destination execution on chain C.`
+            : 'Source transaction confirmed. Waiting for private destination execution on chain C.'
+          : result.bundleHash
+            ? `Bundle ${truncateHash(result.bundleHash)} submitted. Waiting for chain C execution.`
+            : 'Source transaction confirmed. Waiting for chain C execution.'
     });
+
+    if (transactionMode === 'private') {
+      await waitForBundleExecution(result.bundleHash, transactionMode);
+      setInteropStepDetail(
+        'create-relay',
+        result.bundleHash
+          ? `Private bundle ${truncateHash(result.bundleHash)} finished destination execution on chain C. Waiting for the payment request to appear.`
+          : 'Private destination execution completed on chain C. Waiting for the payment request to appear.'
+      );
+      createInvoiceBanner.value =
+        'Private destination execution completed. Waiting for the payment request to appear on chain C.';
+      syncTransactionInterop(txId, 'create', transactionMode);
+    }
 
     const createdInvoice = await waitForInvoiceAppearance(
       payload,
@@ -1444,7 +1511,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
       `Payment request ${createdInvoice.id} was created on chain C.`,
       `Payment request ${createdInvoice.id} is now visible on chain C. No ERC20 transfer was needed for this flow.`
     );
-    syncTransactionInterop(txId, 'create');
+    syncTransactionInterop(txId, 'create', transactionMode);
 
     lastInvoiceDraft.value = {
       ...(lastInvoiceDraft.value ?? {
@@ -1473,7 +1540,7 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
     createInvoiceBannerTone.value = 'error';
     createInvoiceBanner.value = interopError.value;
     failInteropProgress(interopError.value);
-    syncTransactionInterop(txId, 'create');
+    syncTransactionInterop(txId, 'create', transactionMode);
 
     updateTransaction(txId, {
       status: 'failed',
@@ -1486,15 +1553,14 @@ const handleCreateInvoiceSubmit = async (payload: CreateInvoiceSubmitPayload) =>
 const handlePayInvoice = async (invoice: InvoiceRecord) => {
   errorMessage.value = '';
   payInvoiceTarget.value = invoice;
+  payInvoiceMode.value = interopMode.value;
   resetPayInvoiceModalState();
   isPayInvoiceModalOpen.value = true;
   payInvoiceOptionsLoading.value = true;
 
   try {
     const responseObject = await fetchInvoicePaymentOptions(invoice);
-    const filteredOptions = responseObject.options.filter((option) =>
-      sourceChainSupportsPaymentSymbol(option.symbol)
-    );
+    const filteredOptions = filterPaymentOptions(responseObject.options, payInvoiceMode.value);
 
     payInvoiceOptions.value = filteredOptions;
     payInvoiceQuoteType.value = responseObject.quoteType;
@@ -1503,7 +1569,10 @@ const handlePayInvoice = async (invoice: InvoiceRecord) => {
     payInvoiceHasSufficientBillingLiquidity.value = responseObject.hasSufficientBillingLiquidity;
 
     if (filteredOptions.length === 0) {
-      payInvoiceOptionsError.value = `No quoteable payment tokens are configured on ${sourceChainLabel.value} for payment request ${invoice.id}.`;
+      payInvoiceOptionsError.value =
+        payInvoiceMode.value === 'private'
+          ? `No private payment tokens are configured on ${sourceChainLabel.value} for payment request ${invoice.id}.`
+          : `No quoteable payment tokens are configured on ${sourceChainLabel.value} for payment request ${invoice.id}.`;
     }
   } catch (error) {
     payInvoiceOptionsError.value = formatTransactionError(
@@ -1520,11 +1589,13 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
   if (!invoice) {
     return;
   }
+  const transactionMode = payInvoiceMode.value;
 
   errorMessage.value = '';
   interopError.value = '';
   processingInvoiceId.value = invoice.id;
   interopFlow.value = 'pay';
+  interopActivityMode.value = transactionMode;
   interopStepDetails.value = {};
   setInteropProgress(
     'pay',
@@ -1542,7 +1613,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     'Preparing bundle...',
     `Validating payment settlement for chain C using ${selectedOption.symbol}.`
   );
-  syncTransactionInterop(txId, 'pay');
+  syncTransactionInterop(txId, 'pay', transactionMode);
 
   try {
     if (invoice.status.trim().toLowerCase() !== 'created') {
@@ -1572,9 +1643,12 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       throw new Error(payInvoiceDisableReason.value);
     }
 
-    const paymentPreflight = await readPayInvoicePreflight({
-      creatorChainId: invoice.creatorChainId
-    });
+    const paymentPreflight = await readPayInvoicePreflight(
+      {
+        creatorChainId: invoice.creatorChainId
+      },
+      transactionMode
+    );
     if (
       paymentPreflight.requiresCrossChainPayout &&
       !paymentPreflight.hasSufficientInvoicePaymentBalance
@@ -1596,14 +1670,17 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       hash: 'Authorizing passkey...',
       detail: `Authorizing ${sourceChainLabel.value} wallet session to fund the chain C shadow account for payment request ${invoice.id} with ${selectedOption.symbol}.`
     });
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
-    const fundingResult = await sendFundPayInvoiceBundle({
-      invoiceId: invoice.id,
-      paymentAmount: selectedOption.paymentAmount,
-      paymentToken: selectedOption.token as `0x${string}`,
-      payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
-    });
+    const fundingResult = await sendFundPayInvoiceBundle(
+      {
+        invoiceId: invoice.id,
+        paymentAmount: selectedOption.paymentAmount,
+        paymentToken: selectedOption.token as `0x${string}`,
+        payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
+      },
+      transactionMode
+    );
 
     interopSourceTxHash.value = fundingResult.transactionHash ?? '';
     interopBundleHash.value = fundingResult.bundleHash ?? '';
@@ -1613,35 +1690,58 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
         ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed on ${sourceChainLabel.value}.`
         : 'Existing allowance was sufficient, so no source-token approval transaction was needed.'
     );
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
     if (fundingResult.requiredFundingAmount > 0n) {
       setInteropProgress(
         'pay',
         'pay-fund',
-        `Funding bundle confirmed on ${sourceChainLabel.value}. Waiting for ${fundingResult.paymentTokenSymbol} to appear on payer shadow account ${truncateHash(fundingResult.shadowAccount)} on chain C.`,
-        fundingResult.bundleHash
-          ? `Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for relayer finalization and for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive funds on chain C.`
-          : `Waiting for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive ${fundingResult.paymentTokenSymbol} on chain C.`
+        transactionMode === 'private'
+          ? `Funding bundle confirmed on ${sourceChainLabel.value}. Waiting for private execution before ${fundingResult.paymentTokenSymbol} reaches payer shadow account ${truncateHash(fundingResult.shadowAccount)} on chain C.`
+          : `Funding bundle confirmed on ${sourceChainLabel.value}. Waiting for ${fundingResult.paymentTokenSymbol} to appear on payer shadow account ${truncateHash(fundingResult.shadowAccount)} on chain C.`,
+        transactionMode === 'private'
+          ? fundingResult.bundleHash
+            ? `Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for the private executor to execute it and for payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive funds on chain C.`
+            : `Waiting for private execution and for payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive ${fundingResult.paymentTokenSymbol} on chain C.`
+          : fundingResult.bundleHash
+            ? `Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for relayer finalization and for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive funds on chain C.`
+            : `Waiting for the payer shadow account ${truncateHash(fundingResult.shadowAccount)} to receive ${fundingResult.paymentTokenSymbol} on chain C.`
       );
       updateTransaction(txId, {
         hash: fundingResult.transactionHash || 'Funding submitted',
-        detail: fundingResult.bundleHash
-          ? `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for chain C shadow-account balance to increase.`
-          : `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Waiting for chain C shadow-account balance to increase.`
+        detail:
+          transactionMode === 'private'
+            ? fundingResult.bundleHash
+              ? `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Private funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for private execution and shadow-account balance confirmation.`
+              : `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Waiting for private execution and chain C shadow-account balance to increase.`
+            : fundingResult.bundleHash
+              ? `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Funding bundle ${truncateHash(fundingResult.bundleHash)} submitted for ${formatTokenAmount(fundingResult.requiredFundingAmount)} ${fundingResult.paymentTokenSymbol}. Waiting for chain C shadow-account balance to increase.`
+              : `${fundingResult.approvalTransactionHash ? `Allowance tx ${truncateHash(fundingResult.approvalTransactionHash)} confirmed. ` : ''}Waiting for chain C shadow-account balance to increase.`
       });
-      syncTransactionInterop(txId, 'pay');
+      syncTransactionInterop(txId, 'pay', transactionMode);
+
+      if (transactionMode === 'private') {
+        await waitForBundleExecution(fundingResult.bundleHash, transactionMode);
+        setInteropStepDetail(
+          'pay-fund',
+          fundingResult.bundleHash
+            ? `Private funding bundle ${truncateHash(fundingResult.bundleHash)} finished destination execution on chain C. Waiting for payer shadow account ${truncateHash(fundingResult.shadowAccount)} to reflect the bridged balance.`
+            : `Private destination execution completed. Waiting for payer shadow account ${truncateHash(fundingResult.shadowAccount)} to reflect the bridged balance.`
+        );
+        syncTransactionInterop(txId, 'pay', transactionMode);
+      }
 
       await waitForShadowAccountBalance(
         fundingResult.paymentToken,
         fundingResult.shadowAccount,
-        fundingResult.destinationBalanceBeforeFunding + fundingResult.requiredFundingAmount
+        fundingResult.destinationBalanceBeforeFunding + fundingResult.requiredFundingAmount,
+        transactionMode
       );
       setInteropStepDetail(
         'pay-fund',
         `Shadow account ${truncateHash(fundingResult.shadowAccount)} now holds the required ${fundingResult.paymentTokenSymbol} on chain C.`
       );
-      syncTransactionInterop(txId, 'pay');
+      syncTransactionInterop(txId, 'pay', transactionMode);
     } else {
       setInteropProgress(
         'pay',
@@ -1653,7 +1753,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
         hash: fundingResult.approvalTransactionHash || 'Funding skipped',
         detail: `Shadow account already holds ${formatTokenAmount(fundingResult.destinationBalanceBeforeFunding)} ${fundingResult.paymentTokenSymbol} on chain C, so no funding bridge was sent. Proceeding to settlement.`
       });
-      syncTransactionInterop(txId, 'pay');
+      syncTransactionInterop(txId, 'pay', transactionMode);
     }
 
     setInteropProgress(
@@ -1668,14 +1768,17 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       hash: 'Authorizing settlement...',
       detail: `Authorizing ${sourceChainLabel.value} wallet session to approve ${selectedOption.symbol} on chain C and settle payment request ${invoice.id}.`
     });
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
-    const settlementResult = await sendSettlePayInvoiceBundle({
-      invoiceId: invoice.id,
-      paymentAmount: selectedOption.paymentAmount,
-      paymentToken: selectedOption.token as `0x${string}`,
-      payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
-    });
+    const settlementResult = await sendSettlePayInvoiceBundle(
+      {
+        invoiceId: invoice.id,
+        paymentAmount: selectedOption.paymentAmount,
+        paymentToken: selectedOption.token as `0x${string}`,
+        payerRefundAddress: invoice.recipientRefundAddress as `0x${string}`
+      },
+      transactionMode
+    );
 
     interopSourceTxHash.value = settlementResult.transactionHash;
     interopBundleHash.value = settlementResult.bundleHash ?? '';
@@ -1688,17 +1791,37 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     setInteropProgress(
       'pay',
       'pay-confirm',
-      'Settlement bundle confirmed. Waiting for payment status to change to paid on chain C.',
-      `Waiting for payment request ${invoice.id} to be marked paid on chain C. If the creator lives on another chain, the later payout bridge is handled by the backend worker.`
+      transactionMode === 'private'
+        ? 'Settlement bundle confirmed. Waiting for the private executor to execute the settlement bundle on chain C.'
+        : 'Settlement bundle confirmed. Waiting for payment status to change to paid on chain C.',
+      transactionMode === 'private'
+        ? `Waiting for private execution of settlement bundle ${settlementResult.bundleHash ? truncateHash(settlementResult.bundleHash) : ''} before polling payment request ${invoice.id} on chain C.`
+        : `Waiting for payment request ${invoice.id} to be marked paid on chain C. If the creator lives on another chain, the later payout bridge is handled by the backend worker.`
     );
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
     updateTransaction(txId, {
       hash: settlementResult.transactionHash,
-      detail: settlementResult.bundleHash
-        ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for payment request ${invoice.id} to be marked paid.`
-        : `Settlement transaction confirmed. Waiting for payment request ${invoice.id} to be marked paid.`
+      detail:
+        transactionMode === 'private'
+          ? settlementResult.bundleHash
+            ? `Private settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for private execution before checking paid status.`
+            : `Settlement transaction confirmed. Waiting for private destination execution before checking paid status.`
+          : settlementResult.bundleHash
+            ? `Settlement bundle ${truncateHash(settlementResult.bundleHash)} submitted after chain C shadow-account funding. Waiting for payment request ${invoice.id} to be marked paid.`
+            : `Settlement transaction confirmed. Waiting for payment request ${invoice.id} to be marked paid.`
     });
+
+    if (transactionMode === 'private') {
+      await waitForBundleExecution(settlementResult.bundleHash, transactionMode);
+      setInteropStepDetail(
+        'pay-confirm',
+        settlementResult.bundleHash
+          ? `Private settlement bundle ${truncateHash(settlementResult.bundleHash)} finished destination execution on chain C. Waiting for payment request ${invoice.id} to be marked paid.`
+          : `Private destination execution completed. Waiting for payment request ${invoice.id} to be marked paid.`
+      );
+      syncTransactionInterop(txId, 'pay', transactionMode);
+    }
 
     const paidInvoice = await waitForInvoiceStatus(invoice.id, 'paid');
 
@@ -1709,7 +1832,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
       `Payment request ${paidInvoice.id} was paid on chain C.`,
       `Payment request ${paidInvoice.id} is now marked paid on chain C. Any creator payout to another chain will happen in the backend payout stage.`
     );
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
     updateTransaction(txId, {
       status: 'success',
@@ -1726,7 +1849,7 @@ const handlePayInvoiceConfirm = async (selectedOption: InvoicePaymentOption) => 
     );
     errorMessage.value = interopError.value;
     failInteropProgress(interopError.value);
-    syncTransactionInterop(txId, 'pay');
+    syncTransactionInterop(txId, 'pay', transactionMode);
 
     updateTransaction(txId, {
       status: 'failed',

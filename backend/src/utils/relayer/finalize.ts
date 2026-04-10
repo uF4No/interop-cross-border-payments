@@ -249,7 +249,7 @@ async function executeOnL1(
   try {
     finalizeReceipt = await client.l1.waitForTransactionReceipt({
       hash: finalizeHash,
-      timeout: 300_000
+      timeout: 60_000
     });
   } catch (waitError) {
     const errorMessage = waitError instanceof Error ? waitError.message : String(waitError);

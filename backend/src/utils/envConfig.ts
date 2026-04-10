@@ -116,7 +116,7 @@ const envSchema = z.object({
   SIWE_CHALLENGE_PATH: z.string().min(1).default('/siwe-messages'),
   SIWE_LOGIN_PATH: z.string().min(1).default('/auth/login/crypto-native'),
 
-  POLL_INTERVAL: z.coerce.number().int().positive().default(30000),
+  POLL_INTERVAL: z.coerce.number().int().positive().default(10000),
 
   FINALIZATION_WAIT: z.coerce.number().int().positive().default(900000)
 });

@@ -145,6 +145,7 @@ export async function submitUserOpWithFallback(params: {
   chainId: number;
   entryPoint: Address;
   userOp: BundlerUserOpV08;
+  preferDirectHandleOps?: boolean;
 }): Promise<UserOpSubmissionResult> {
   const rpcRequest = params.readClient.request as unknown as (
     args: RpcRequestArgs
@@ -152,6 +153,14 @@ export async function submitUserOpWithFallback(params: {
 
   let primaryError: Error | null = null;
   const directFallbackEnabled = canUseDirectFallback();
+
+  if (params.preferDirectHandleOps && directFallbackEnabled) {
+    return await submitDirectHandleOpsFallback({
+      chainId: params.chainId,
+      entryPoint: params.entryPoint,
+      userOp: params.userOp
+    });
+  }
 
   try {
     const userOpHashFromBundler = (await rpcRequest({

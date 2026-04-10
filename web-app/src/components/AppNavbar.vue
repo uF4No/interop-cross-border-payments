@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useInteropMode } from '../composables/useInteropMode';
 import { usePrividium } from '../composables/usePrividium';
 import { useSsoAccount } from '../composables/useSsoAccount';
 import BaseIcon from './BaseIcon.vue';
@@ -9,12 +10,14 @@ const router = useRouter();
 const route = useRoute();
 const { account: ssoAccount } = useSsoAccount();
 const { signOut, branding } = usePrividium();
+const { mode: interopMode, isPrivateAvailable, setMode } = useInteropMode();
 
 const dropdownOpen = ref(false);
 const copied = ref(false);
 const sessionDropdownRef = ref<HTMLElement | null>(null);
 let copiedResetTimer: ReturnType<typeof setTimeout> | null = null;
 const canShowSessionControls = computed(() => route.path !== '/login');
+const canShowInteropToggle = computed(() => canShowSessionControls.value && isPrivateAvailable.value);
 
 const copyAddress = () => {
   if (ssoAccount.value) {
@@ -65,13 +68,69 @@ onUnmounted(() => window.removeEventListener('click', closeDropdown));
         <div class="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-white shadow-lg">
           <BaseIcon :name="branding.companyIcon" class="w-5 h-5" />
         </div>
-        <span class="text-2xl font-bold text-slate-900 tracking-tight">{{ branding.companyName }}</span>
+        <div class="flex flex-col gap-2">
+          <span class="text-2xl font-bold text-slate-900 tracking-tight">{{ branding.companyName }}</span>
+          <div
+            v-if="canShowInteropToggle"
+            class="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 p-1 lg:hidden"
+          >
+            <button
+              class="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] transition-colors"
+              :class="
+                interopMode === 'public'
+                  ? 'bg-white text-slate-700 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
+              "
+              @click="setMode('public')"
+            >
+              Public
+            </button>
+            <button
+              class="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] transition-colors"
+              :class="
+                interopMode === 'private'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-600'
+              "
+              @click="setMode('private')"
+            >
+              Private
+            </button>
+          </div>
+        </div>
       </div>
       
       <!-- Group 2: Network Info (Centered) -->
       <div class="hidden lg:flex items-center gap-3 px-8 border-x border-slate-100 h-8">
         <BaseIcon name="GlobeAltIcon" class="w-5 h-5 text-slate-400" />
         <span class="text-sm font-semibold text-slate-600 tracking-tight whitespace-nowrap">{{ branding.companyName }} Prividium™</span>
+        <div
+          v-if="canShowInteropToggle"
+          class="ml-3 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 p-1"
+        >
+          <button
+            class="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] transition-colors"
+            :class="
+              interopMode === 'public'
+                ? 'bg-white text-slate-700 shadow-sm'
+                : 'text-slate-400 hover:text-slate-600'
+            "
+            @click="setMode('public')"
+          >
+            Public
+          </button>
+          <button
+            class="rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] transition-colors"
+            :class="
+              interopMode === 'private'
+                ? 'bg-emerald-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-600'
+            "
+            @click="setMode('private')"
+          >
+            Private
+          </button>
+        </div>
       </div>
 
       <div class="flex items-center gap-6 min-w-[200px] justify-end">

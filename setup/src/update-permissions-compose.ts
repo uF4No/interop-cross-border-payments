@@ -19,6 +19,11 @@ async function main() {
   const setupPath = path.join(rootPath, 'setup');
   const setupEnvPath = path.join(setupPath, '.env');
   const composePath = path.join(rootPath, 'prividium-3chain-local', 'docker-compose.yml');
+  const bundlerComposePath = path.join(
+    rootPath,
+    'prividium-3chain-local',
+    'docker-compose-deps.yml'
+  );
 
   assertDotEnv(setupPath);
 
@@ -37,6 +42,7 @@ async function main() {
 
   const result = updatePermissionApisCompose({
     composePath,
+    bundlerComposePath,
     services: [
       {
         serviceName: 'permissions-api-l2a',
@@ -74,6 +80,9 @@ async function main() {
   });
 
   console.log(`\nUpdated compose file: ${result.composePath}`);
+  if (result.bundlerComposePath) {
+    console.log(`Updated bundler compose file: ${result.bundlerComposePath}`);
+  }
   for (const service of result.services) {
     console.log(`  ${service.serviceName} bundler RPC: ${service.bundlerRpcUrl}`);
   }

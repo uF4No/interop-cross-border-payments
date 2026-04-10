@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import BaseIcon from '../components/BaseIcon.vue';
 import { getPrividiumBranding, usePrividium } from '../composables/usePrividium';
 import { useRpcClient } from '../composables/useRpcClient';
-import { DEPLOY_ACCOUNT_ENDPOINT } from '../utils/sso/constants';
+import { DEPLOY_ACCOUNT_ENDPOINT, getSsoContracts } from '../utils/sso/constants';
 import {
   createNewPasskey,
   saveAccountAddress,
@@ -203,7 +203,15 @@ const useExistingPasskey = async () => {
     });
     const fromAddress = linkedWallets[0] as Address;
     console.debug('[passkeys] using from address', fromAddress);
-    const result = await selectExistingPasskey(displayName, authClient, fromAddress);
+    const activeSsoContracts = getSsoContracts(selectedChainKey.value);
+    console.debug('[passkeys] active sso contracts', {
+      chainKey: selectedChainKey.value,
+      ...activeSsoContracts
+    });
+    const result = await selectExistingPasskey(displayName, authClient, fromAddress, {
+      chainKey: selectedChainKey.value,
+      ssoContracts: activeSsoContracts
+    });
     console.debug('[passkeys] selectExistingPasskey result', result);
     const accountAddress = result.accountAddress?.toLowerCase();
     console.debug('[passkeys] passkey account address', accountAddress);

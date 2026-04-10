@@ -32,6 +32,27 @@ export type ApplicationDeployment = {
   oauthRedirectUris?: string[];
 };
 
+export type PrivateInteropChainDeployment = {
+  chainId?: number;
+  rpcUrl?: string;
+  interopCenter?: Address;
+  interopHandler?: Address;
+  nativeTokenVault?: Address;
+  assetRouter?: Address;
+};
+
+export type PrivateInteropTokenDeployment = {
+  address?: Address;
+  assetId?: Hex;
+  sourceToken?: Address;
+};
+
+export type PrivateInteropDeployment = {
+  enabled?: boolean;
+  chains?: Partial<Record<ChainKey, PrivateInteropChainDeployment>>;
+  paymentTokens?: Partial<Record<Exclude<ChainKey, 'c'>, Partial<Record<TokenKey, PrivateInteropTokenDeployment>>>>;
+};
+
 export type ChainDeployment = {
   chainId?: number;
   rpcUrl?: string;
@@ -59,6 +80,7 @@ export type ContractsConfig = {
     l1InteropHandler?: Address;
     l2InteropCenter?: Address;
   };
+  privateInterop?: PrivateInteropDeployment;
   app?: Record<string, Address>;
 };
 
@@ -190,6 +212,11 @@ export function mergeContractsConfig(
     ...(mergedChains ? { chains: mergedChains } : {}),
     ...(mergedSso ? { sso: mergedSso } : {}),
     ...(mergedInterop ? { interop: mergedInterop } : {}),
+    ...(update.privateInterop !== undefined
+      ? { privateInterop: update.privateInterop }
+      : base?.privateInterop
+        ? { privateInterop: base.privateInterop }
+        : {}),
     ...(mergedApp ? { app: mergedApp } : {})
   };
 }

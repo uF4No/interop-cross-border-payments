@@ -1,9 +1,11 @@
 import path from 'node:path';
 
-import { extractConfigOptional, setDotEnvConfig } from './config-tools';
+import { extractConfigOptional, removeDotEnvConfig, setDotEnvConfig } from './config-tools';
 import {
   type ChainDeployment,
   type ContractsConfig,
+  type PrivateInteropChainDeployment,
+  type PrivateInteropDeployment,
   type SsoContracts,
   type TokenDeployment,
   type TokenKey,
@@ -23,6 +25,8 @@ type ChainKey = 'a' | 'b' | 'c';
 
 const chainKeys: ChainKey[] = ['a', 'b', 'c'];
 const tokenKeys: TokenKey[] = ['usdc', 'sgd', 'tbill'];
+const privateChainKeys: ChainKey[] = ['a', 'b', 'c'];
+const privateSourceKeys: Array<Exclude<ChainKey, 'c'>> = ['a', 'b'];
 
 const ssoEnvMap: Array<[keyof SsoContracts, string]> = [
   ['factory', 'SSO_FACTORY_CONTRACT'],
@@ -45,6 +49,12 @@ function setOptionalEnv(dirPath: string, name: string, value?: string | number |
     return;
   }
   setDotEnvConfig(dirPath, name, String(value));
+}
+
+function clearEnvKeys(dirPath: string, names: readonly string[]): void {
+  for (const name of names) {
+    removeDotEnvConfig(dirPath, name);
+  }
 }
 
 function syncSso(
@@ -189,6 +199,79 @@ function syncLegacyBackCompat(
   }
 }
 
+function privateChainEnvNames(key: ChainKey) {
+  const label = chainLabel(key);
+  return [
+    `VITE_PRIVATE_CHAIN_${label}_CHAIN_ID`,
+    `VITE_PRIVATE_CHAIN_${label}_RPC_URL`,
+    `VITE_PRIVATE_CHAIN_${label}_INTEROP_CENTER`,
+    `VITE_PRIVATE_CHAIN_${label}_INTEROP_HANDLER`,
+    `VITE_PRIVATE_CHAIN_${label}_NATIVE_TOKEN_VAULT`,
+    `VITE_PRIVATE_CHAIN_${label}_ASSET_ROUTER`
+  ] as const;
+}
+
+function privatePaymentTokenEnvName(sourceKey: Exclude<ChainKey, 'c'>, tokenKey: TokenKey) {
+  return `VITE_PRIVATE_TOKEN_${tokenKey.toUpperCase()}_ADDRESS_CHAIN_C_FROM_${sourceKey.toUpperCase()}`;
+}
+
+function syncPrivateInteropChain(
+  dirPath: string,
+  key: ChainKey,
+  chain: PrivateInteropChainDeployment | undefined
+) {
+  const label = chainLabel(key);
+  if (!chain) {
+    clearEnvKeys(dirPath, privateChainEnvNames(key));
+    return;
+  }
+
+  setOptionalEnv(dirPath, `VITE_PRIVATE_CHAIN_${label}_CHAIN_ID`, chain.chainId);
+  setOptionalEnv(dirPath, `VITE_PRIVATE_CHAIN_${label}_RPC_URL`, chain.rpcUrl);
+  setOptionalEnv(dirPath, `VITE_PRIVATE_CHAIN_${label}_INTEROP_CENTER`, chain.interopCenter);
+  setOptionalEnv(dirPath, `VITE_PRIVATE_CHAIN_${label}_INTEROP_HANDLER`, chain.interopHandler);
+  setOptionalEnv(
+    dirPath,
+    `VITE_PRIVATE_CHAIN_${label}_NATIVE_TOKEN_VAULT`,
+    chain.nativeTokenVault
+  );
+  setOptionalEnv(dirPath, `VITE_PRIVATE_CHAIN_${label}_ASSET_ROUTER`, chain.assetRouter);
+}
+
+function syncPrivateInterop(args: SyncEnvArgs, privateInterop: PrivateInteropDeployment | undefined) {
+  const webAppDir = args.webAppPath;
+
+  if (!privateInterop?.enabled) {
+    clearEnvKeys(webAppDir, ['VITE_PRIVATE_INTEROP_ENABLED']);
+    for (const key of privateChainKeys) {
+      clearEnvKeys(webAppDir, privateChainEnvNames(key));
+    }
+    for (const sourceKey of privateSourceKeys) {
+      for (const tokenKey of tokenKeys) {
+        clearEnvKeys(webAppDir, [privatePaymentTokenEnvName(sourceKey, tokenKey)]);
+      }
+    }
+    return;
+  }
+
+  setDotEnvConfig(webAppDir, 'VITE_PRIVATE_INTEROP_ENABLED', '1');
+  for (const key of privateChainKeys) {
+    syncPrivateInteropChain(webAppDir, key, privateInterop.chains?.[key]);
+  }
+
+  for (const sourceKey of privateSourceKeys) {
+    for (const tokenKey of tokenKeys) {
+      const paymentToken = privateInterop.paymentTokens?.[sourceKey]?.[tokenKey]?.address;
+      const envName = privatePaymentTokenEnvName(sourceKey, tokenKey);
+      if (paymentToken) {
+        setDotEnvConfig(webAppDir, envName, paymentToken);
+      } else {
+        clearEnvKeys(webAppDir, [envName]);
+      }
+    }
+  }
+}
+
 export function syncEnvFromContractsConfig(args: SyncEnvArgs) {
   const config = readContractsConfig(args.contractsConfigPath);
   if (!config) {
@@ -213,6 +296,7 @@ export function syncEnvFromContractsConfig(args: SyncEnvArgs) {
   const chainC = config.chains?.c;
 
   syncLegacyBackCompat(args, config, chainA, chainC);
+  syncPrivateInterop(args, config.privateInterop);
 
   const fallbackChainAId = extractConfigOptional(args.setupEnvPath, 'PRIVIDIUM_CHAIN_ID');
   const fallbackChainARpc = extractConfigOptional(args.setupEnvPath, 'PRIVIDIUM_RPC_URL');
